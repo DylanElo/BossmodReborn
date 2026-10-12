@@ -7,6 +7,8 @@ sealed class P3BlackHalo(BossModule module) : Components.CastSharedTankbuster(mo
 sealed class P4HallowedWings(BossModule module) : Components.SimpleAOEGroups(module, [(uint)AID.HallowedWingsL, (uint)AID.HallowedWingsR], new AOEShapeRect(80f, 20f));
 
 sealed class P5ParadiseLost(BossModule module) : Components.CastCounter(module, (uint)AID.ParadiseLostP5AOE);
+sealed class P5PandorasBoxHint(BossModule module) : Components.CastHint(module, (uint)AID.PandorasBox, "Tank LB3 required before Pandora's Box resolves", true);
+sealed class P5EnrageLBHint(BossModule module) : Components.CastHint(module, (uint)AID.ParadiseLostP5, "Assigned melee: LB3 when Ryne refills the gauge", true);
 
 [ModuleInfo(BossModuleInfo.Maturity.Verified, PrimaryActorOID = (uint)OID.BossP1, GroupType = BossModuleInfo.GroupType.CFC, GroupID = 1006, NameID = 9707, PlanLevel = 100)]
 public sealed class FRU : BossModule

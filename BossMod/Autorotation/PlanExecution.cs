@@ -119,7 +119,7 @@ public sealed class PlanExecution
         int TargetParam);
 
     // returns planned entries within [now, now + lookAheadSeconds), resolved along the currently active branch of the plan
-    // only tracks where every non-default option maps 1:1 to an associated action are resolved to a concrete ActionId; others are skipped
+    // Resolve 1:1 action tracks and the ranged mitigation tracks whose Use variants all execute one action.
     public List<PlannedAction> GetUpcomingPlannedActions(WorldState ws, int playerSlot, float lookAheadSeconds = 60)
     {
         var result = new List<PlannedAction>();
@@ -137,8 +137,12 @@ public sealed class PlanExecution
             {
                 if (module.Definition.Configs[ti] is not StrategyConfigTrack config)
                     continue;
-                // only resolve tracks where associated actions map 1:1 to non-default options
-                if (config.AssociatedActions.Count != config.Options.Count - 1)
+                var rangedMitigation = config.AssociatedActions.Count == 1
+                    && (module.Type == typeof(ClassMCHUtility) && config.InternalName == "Tactician"
+                        || module.Type == typeof(ClassBRDUtility) && config.InternalName == "Troubadour");
+                // Burst windows are timing markers for Rotation Solver's MCH Plan: reported with no action so nothing auto-casts them.
+                var marker = module.Type == typeof(ClassMCHUtility) && config.InternalName == "Burst";
+                if (!rangedMitigation && !marker && config.AssociatedActions.Count != config.Options.Count - 1)
                     continue;
 
                 var entries = module.Tracks[ti];
@@ -149,10 +153,10 @@ public sealed class PlanExecution
                         continue;
                     if (!e.IntersectBranchRange(s.BranchID, s.NumBranches))
                         continue;
-                    if (e.Value is not StrategyValueTrack stv || stv.Option <= 0)
+                    if (e.Value is not StrategyValueTrack stv || stv.Option <= 0 || stv.Option >= config.Options.Count)
                         continue;
 
-                    var action = config.AssociatedActions[stv.Option - 1];
+                    var action = marker ? default : config.AssociatedActions[rangedMitigation ? 0 : stv.Option - 1];
                     result.Add(new(
                         module.Type.FullName ?? module.Type.Name,
                         config.InternalName,

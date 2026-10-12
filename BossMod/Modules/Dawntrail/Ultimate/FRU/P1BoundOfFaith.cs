@@ -61,6 +61,9 @@ sealed class P1BoundOfFaith(BossModule module) : Components.UniformStackSpread(m
 
     private void InitAssignments()
     {
+        var manaSlots = _config.P123ManaStrategy ? Service.Config.Get<PartyRolesConfig>().SlotsPerAssignment(Raid) : [];
+        if (_config.P123ManaStrategy && manaSlots.Length == 0)
+            return;
         if (_safeHalo != default)
         {
             WDir averageOffset = default;
@@ -82,11 +85,19 @@ sealed class P1BoundOfFaith(BossModule module) : Components.UniformStackSpread(m
         }
 
         // swaps
-        if (tetherSlots[0] >= 0 && AssignedGroups[tetherSlots[0]] == AssignedGroups[tetherSlots[1]])
+        if (tetherSlots[0] >= 0 && tetherSlots[1] >= 0 && AssignedGroups[tetherSlots[0]] == AssignedGroups[tetherSlots[1]])
         {
-            // flex tether with lower prio
-            var tetherFlexSlot = prio[tetherSlots[0]] < prio[tetherSlots[1]] ? tetherSlots[0] : tetherSlots[1];
+            // Mana keeps the higher-priority prey north; legacy flexes the lower priority on either side.
+            var flexLower = !_config.P123ManaStrategy || AssignedGroups[tetherSlots[0]] > 0;
+            var tetherFlexSlot = (prio[tetherSlots[0]] < prio[tetherSlots[1]]) == flexLower ? tetherSlots[0] : tetherSlots[1];
             AssignedGroups[tetherFlexSlot] = -AssignedGroups[tetherFlexSlot];
+
+            if (_config.P123ManaStrategy)
+            {
+                var normalFlexSlot = manaSlots[(int)(AssignedGroups[tetherFlexSlot] < 0 ? PartyRolesConfig.Assignment.MT : PartyRolesConfig.Assignment.M1)];
+                AssignedGroups[normalFlexSlot] = -AssignedGroups[normalFlexSlot];
+                return;
+            }
 
             // now the group where we've moved flex slot has 5 people, find untethered with lowest prio
             for (var normalFlexSlot = 0; normalFlexSlot < PartyState.MaxPartySize; ++normalFlexSlot)
@@ -133,6 +144,21 @@ sealed class P1BoundOfFaithAIStack(BossModule module) : BossComponent(module)
     private readonly P1BoundOfFaith? _comp = module.FindComponent<P1BoundOfFaith>();
     private bool _haveFetters;
 
+    internal static int ManaStackIndex(int group, int[] stackGroups)
+    {
+        if (group == 0 || stackGroups.Length != 2 || stackGroups[0] == 0 || stackGroups[0] != -stackGroups[1])
+            return -1;
+        var index = -1;
+        for (var i = 0; i < stackGroups.Length; ++i)
+            if (stackGroups[i] == group)
+            {
+                if (index >= 0)
+                    return -1; // incomplete/duplicate assignments: do not choose by distance
+                index = i;
+            }
+        return index;
+    }
+
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
         if (_comp == null)
@@ -140,9 +166,14 @@ sealed class P1BoundOfFaithAIStack(BossModule module) : BossComponent(module)
 
         if (_haveFetters)
         {
-            // stack with closest (note: we could also stack with assigned, but that won't work well if people swap and assignments end up wrong)
-            //var stackWith = _comp.Stacks.FirstOrDefault(s => _comp.AssignedGroups[Raid.FindSlot(s.Target.InstanceID)] == _comp.AssignedGroups[slot]);
             var stackWith = _comp.Stacks.MinBy(s => (s.Target.Position - actor.Position).LengthSq());
+            if (Service.Config.Get<FRUConfig>().P123ManaStrategy)
+            {
+                var stackIndex = ManaStackIndex(_comp.AssignedGroups[slot], _comp.Stacks.Select(s => Raid.FindSlot(s.Target.InstanceID) is var targetSlot && targetSlot >= 0 ? _comp.AssignedGroups[targetSlot] : 0).ToArray());
+                if (stackIndex < 0 || _comp.Stacks[stackIndex].Target.IsDeadOrDestroyed)
+                    return;
+                stackWith = _comp.Stacks[stackIndex];
+            }
             foreach (var s in _comp.Stacks)
             {
                 ShapeDistance zone = s.Target == stackWith.Target

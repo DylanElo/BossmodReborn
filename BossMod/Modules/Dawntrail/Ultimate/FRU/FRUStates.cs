@@ -59,7 +59,7 @@ sealed class FRUStates : StateMachineBuilder
         P4DarklitDragonsong(id + 0x110000u, 1.9f);
         P4AkhMornMornAfah(id + 0x120000u, 5.8f);
         P4CrystallizeTime(id + 0x130000u, 4.6f);
-        P4AkhMornMornAfah(id + 0x140000u, 0.1f);
+        P4AkhMornMornAfah(id + 0x140000u, 0.1f, soloOT: true);
         P4Enrage(id + 0x150000u, 2.3f);
     }
 
@@ -263,7 +263,8 @@ sealed class FRUStates : StateMachineBuilder
             .ActivateOnEnter<P2TwinStillnessSilence>() // show the cone caster early, to simplify finding movement direction...
             .ExecOnEnter<P2FrigidNeedleCircle>(static comp => comp.Risky = false)
             .ExecOnEnter<P2FrigidNeedleCross>(static comp => comp.Risky = false)
-            .DeactivateOnExit<P2HeavenlyStrike>();
+            .DeactivateOnExit<P2HeavenlyStrike>()
+            .SetHint(StateMachine.StateHint.Knockback);
         ComponentCondition<P2FrigidNeedleCross>(id + 0x50u, 2.8f, static comp => comp.NumCasts > 0, "Stars")
             .ActivateOnEnter<P2SinboundHoly>()
             .ExecOnEnter<P2FrigidNeedleCircle>(static comp => comp.Risky = true)
@@ -575,10 +576,11 @@ sealed class FRUStates : StateMachineBuilder
             .SetHint(StateMachine.StateHint.Tankbuster);
     }
 
-    private void P4AkhMornMornAfah(uint id, float delay)
+    private void P4AkhMornMornAfah(uint id, float delay, bool soloOT = false)
     {
         ActorCast(id, _module.BossP4Usurper, AID.AkhMornUsurper, delay, 4, true)
-            .ActivateOnEnter<P4AkhMorn>();
+            .ActivateOnEnter<P4AkhMorn>()
+            .ExecOnEnter<P4AkhMorn>(comp => comp.SetSoloOT(soloOT));
         ComponentCondition<P4AkhMorn>(id + 0x10u, 0.9f, static comp => comp.NumCasts >= 1, "Party stack 1");
         ComponentCondition<P4AkhMorn>(id + 0x11u, 1.1f, static comp => comp.NumCasts >= 2, "Party stack 2");
         ComponentCondition<P4AkhMorn>(id + 0x12u, 1.1f, static comp => comp.NumCasts >= 3, "Party stack 3");
@@ -587,7 +589,7 @@ sealed class FRUStates : StateMachineBuilder
 
         ActorCast(id + 0x1000u, _module.BossP4Usurper, AID.MornAfahUsurper, 0.1f, 6, true)
             .ActivateOnEnter<P4MornAfah>();
-        ComponentCondition<P4MornAfah>(id + 0x1010u, 0.9f, static comp => comp.Stacks.Count == 0, "Raid stack + HP check")
+        ComponentCondition<P4MornAfah>(id + 0x1010u, 0.9f, static comp => comp.Stacks.Count + comp.Spreads.Count == 0, "Raid stack + HP check")
             .DeactivateOnExit<P4MornAfah>();
     }
 
@@ -620,7 +622,7 @@ sealed class FRUStates : StateMachineBuilder
             .DeactivateOnExit<P4CrystallizeTimeUnholyDarkness>();
         ActorCast(id + 0x40u, _module.BossP4Usurper, AID.TidalLight, 0.5f, 3f, true, "Exaline EW start")
             .ActivateOnEnter<P4CrystallizeTimeTidalLight>();
-        ComponentCondition<P4CrystallizeTimeMaelstrom>(id + 0x50u, 1.1f, static comp => comp.NumCasts > 4, "Hourglass 3")
+        ComponentCondition<P4CrystallizeTimeMaelstrom>(id + 0x50u, 1.1f, static comp => comp.NumCasts >= 6, "Hourglass 3")
             .DeactivateOnExit<P4CrystallizeTimeMaelstrom>()
             .DeactivateOnExit<P4CrystallizeTimeHints>();
         ActorCast(id + 0x60u, _module.BossP4Usurper, AID.TidalLight, 2.3f, 3f, true, "Exaline NS start")
@@ -687,10 +689,11 @@ sealed class FRUStates : StateMachineBuilder
         ActorCastMulti(id + 0x10u, _module.BossP5, [AID.WingsDarkAndLightDL, AID.WingsDarkAndLightLD], 3.2f, 6.9f, true)
             .ActivateOnEnter<P5ParadiseRegainedBaits>();
         ComponentCondition<P5ParadiseRegainedBaits>(id + 0x20u, 0.3f, static comp => comp.NumCasts > 0, "Light/dark"); // first tower resolves at the same time
-        ComponentCondition<P5ParadiseRegainedBaits>(id + 0x30u, 3.7f, static comp => comp.NumCasts > 1, "Dark/light") // second tower resolves at the same time
-            .DeactivateOnExit<P5ParadiseRegainedBaits>();
-        // note: tethers resolve ~0.8s after cleave, but they won't happen if tether target dies to cleave
+        ComponentCondition<P5ParadiseRegainedBaits>(id + 0x30u, 3.7f, static comp => comp.NumCasts > 1, "Dark/light"); // second tower resolves at the same time
+        // note: tethers resolve ~0.8s after cleave, but they won't happen if tether target dies to cleave;
+        // baits stay active (cleaves off) so the second tether's avoidance outlives cleave two
         ComponentCondition<P5ParadiseRegainedTowers>(id + 0x40u, 3.4f, static comp => comp.NumCasts > 2, "Towers resolve")
+            .DeactivateOnExit<P5ParadiseRegainedBaits>()
             .DeactivateOnExit<P5ParadiseRegainedTowers>();
     }
 
@@ -717,13 +720,17 @@ sealed class FRUStates : StateMachineBuilder
 
     private void P5PandorasBox(uint id, float delay)
     {
-        ActorCast(id, _module.BossP5, AID.PandorasBox, delay, 12f, true, "Tank LB")
+        ActorCast(id, _module.BossP5, AID.PandorasBox, delay, 12f, true, "Tank LB3")
+            .ActivateOnEnter<P5PandorasBoxHint>()
+            .DeactivateOnExit<P5PandorasBoxHint>()
             .SetHint(StateMachine.StateHint.Raidwide);
     }
 
     private void P5Enrage(uint id, float delay)
     {
-        ActorCast(id, _module.BossP5, AID.ParadiseLostP5, delay, 12f, true);
+        ActorCast(id, _module.BossP5, AID.ParadiseLostP5, delay, 12f, true)
+            .ActivateOnEnter<P5EnrageLBHint>()
+            .DeactivateOnExit<P5EnrageLBHint>();
         ComponentCondition<P5ParadiseLost>(id + 2u, 9.5f, static comp => comp.NumCasts > 0, "Enrage")
             .ActivateOnEnter<P5ParadiseLost>()
             .DeactivateOnExit<P5ParadiseLost>();

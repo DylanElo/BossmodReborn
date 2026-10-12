@@ -176,7 +176,7 @@ sealed class P1FallOfFaith(BossModule module) : Components.CastCounter(module, d
         if (order < 5)
             return default;
         WDir dir = _config.P1FallOfFaithEW ? new(0, -1) : new(1, 0);
-        return (order is 5 or 8 ? 2 : -2) * dir;
+        return ((_config.P123ManaStrategy && _config.P1FallOfFaithEW ? order is 5 or 7 : order is 5 or 8) ? 2 : -2) * dir;
     }
 
     private WDir BaitOffset(int order, bool fire) => order == 0 ? default : order < 5 || fire ? CenterBaitOffset(order) : ProteanBaitOffset(order);

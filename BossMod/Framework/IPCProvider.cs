@@ -88,7 +88,7 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.Raidwide);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Timeline.NextTankbusterIn", () =>
@@ -100,7 +100,7 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.Tankbuster);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Timeline.NextKnockbackIn", () =>
@@ -112,7 +112,7 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.Knockback);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Timeline.NextDowntimeIn", () =>
@@ -124,7 +124,7 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.DowntimeStart);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Timeline.NextDowntimeEndIn", () =>
@@ -136,7 +136,7 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.DowntimeEnd);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Timeline.NextVulnerableIn", () =>
@@ -148,7 +148,7 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.VulnerableStart);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Timeline.NextVulnerableEndIn", () =>
@@ -160,13 +160,13 @@ sealed class IPCProvider : IDisposable
             }
 
             var next = module.StateMachine.NextTransitionWithFlag(StateMachine.StateHint.VulnerableEnd);
-            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - DateTime.Now).TotalSeconds;
+            return next == DateTime.MaxValue ? float.MaxValue : (float)(next - module.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Hints.NextDamageIn", () =>
         {
             var predicted = hints.PredictedDamage;
-            return predicted.Count == 0 ? float.MaxValue : (float)(predicted[0].Activation - DateTime.Now).TotalSeconds;
+            return predicted.Count == 0 ? float.MaxValue : (float)(predicted[0].Activation - bossmod.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Hints.NextDamageType", () =>
@@ -186,7 +186,7 @@ sealed class IPCProvider : IDisposable
         Register("Movement.IsMoving", () => hints.ForcedMovement != null || hints.HoldCasts);
         Register("Movement.IsMoveRequested", movement.IsMoveRequested);
         Register("Hints.ForbiddenZonesCount", () => hints.ForbiddenZones.Count);
-        Register("Hints.ForbiddenZonesNextActivation", () => hints.ForbiddenZones.Count == 0 ? float.MaxValue : (float)(hints.ForbiddenZones[0].activation - DateTime.Now).TotalSeconds);
+        Register("Hints.ForbiddenZonesNextActivation", () => hints.ForbiddenZones.Count == 0 ? float.MaxValue : (float)(hints.ForbiddenZones[0].activation - bossmod.WorldState.CurrentTime).TotalSeconds);
         Register("Hints.ArenaCenter", () => new Vector2(hints.PathfindMapCenter.X, hints.PathfindMapCenter.Z));
         Register("Hints.ArenaRadius", () => hints.PathfindMapBounds.Radius);
         Register("Hints.PredictedDamagePlayers", () => hints.PredictedDamage.Count == 0 ? 0ul : hints.PredictedDamage[0].Players.Raw);
@@ -208,7 +208,7 @@ sealed class IPCProvider : IDisposable
         Register("Hints.NextRaidwideDamageIn", () =>
         {
             var predicted = hints.PredictedDamage;
-            var now = DateTime.Now;
+            var now = bossmod.WorldState.CurrentTime;
             for (var i = 0; i < predicted.Count; ++i)
             {
                 if (predicted[i].Type == AIHints.PredictedDamageType.Raidwide)
@@ -222,7 +222,7 @@ sealed class IPCProvider : IDisposable
         Register("Hints.NextTankbusterDamageIn", () =>
         {
             var predicted = hints.PredictedDamage;
-            var now = DateTime.Now;
+            var now = bossmod.WorldState.CurrentTime;
             for (var i = 0; i < predicted.Count; ++i)
             {
                 if (predicted[i].Type == AIHints.PredictedDamageType.Tankbuster)
@@ -237,7 +237,7 @@ sealed class IPCProvider : IDisposable
         {
             return hints.ImminentSpecialMode == default
                 ? float.MaxValue
-                : (float)(hints.ImminentSpecialMode.activation - DateTime.Now).TotalSeconds;
+                : (float)(hints.ImminentSpecialMode.activation - bossmod.WorldState.CurrentTime).TotalSeconds;
         });
 
         Register("Hints.SpecialModeType", () =>
@@ -556,6 +556,7 @@ sealed class IPCProvider : IDisposable
         Register("ObstacleMap.EvaluateTempMapQuality", obstacles.EvaluateTempMapQuality);
 
         // Cooldown Planner IPC endpoints for external plugin integration (RSR)
+        Register("Plan.MchWeaveHandoffVersion", static () => 1);
         // returns a JSON-serialized array of PlanExecution.PlannedAction entries, resolved along the currently active plan branch
         Register("Plan.GetUpcomingActions", (float lookAheadSeconds) =>
         {

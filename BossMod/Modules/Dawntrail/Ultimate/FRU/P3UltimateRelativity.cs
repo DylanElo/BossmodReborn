@@ -31,10 +31,23 @@ sealed class P3UltimateRelativity(BossModule module) : Components.CastCounter(mo
 
     public Angle LaserRotationAt(WPos pos) => LaserRotations.FirstOrDefault(r => r.origin.Position.AlmostEqual(pos, 1f)).rotation;
 
+    public override void Update()
+    {
+        // Self-marks can arrive or change after the yellow tethers establish relative north.
+        if (_config.P123ManaStrategy && _numYellowTethers == 3)
+            InitAssignments();
+    }
+
     public override void AddHints(int slot, Actor actor, TextHints hints)
     {
         if (States[slot].RewindOrder == 0)
             return;
+
+        if (_config.P123ManaStrategy && States[slot].AssignedDir == default)
+        {
+            hints.Add(actor.Class.IsSupport() ? "Waiting for valid bind1/bind2 UR marks" : "Waiting for valid attack1/attack2 UR marks");
+            return;
+        }
 
         var isSupport = actor.Class.IsSupport();
         var hintBuilder = new StringBuilder();
@@ -53,9 +66,14 @@ sealed class P3UltimateRelativity(BossModule module) : Components.CastCounter(mo
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
+        var range = States[slot].AssignedDir != default ? RangeHint(States[slot], actor.Class.IsSupport(), NumCasts) : 0f;
+        // rotating lasers keep firing ~0.5s after the next set is baited (neighbour sweeps through baiters standing radially),
+        // and a fresh baiter has to leave their own beam: always avoid beams that already fired (the 'out' branch adds them itself)
+        if (range != RangeHintOut && Module.FindComponent<P3UltimateRelativitySinboundMeltdownAOE>() is { } beams)
+            foreach (var laser in beams.ActiveAOEs(slot, actor))
+                hints.AddForbiddenZone(laser.Shape.Distance(laser.Origin, laser.Rotation), laser.Activation);
         if (States[slot].AssignedDir != default)
         {
-            var range = RangeHint(States[slot], actor.Class.IsSupport(), NumCasts);
             switch (range)
             {
                 case RangeHintOut:
@@ -217,7 +235,10 @@ sealed class P3UltimateRelativity(BossModule module) : Components.CastCounter(mo
         }
 
         // calculate positions
-        var northDir = Angle.FromDirection(_relNorth);
+        var poniKone = _config.P3UltimateRelativityPoniKone;
+        var northDir = Angle.FromDirection(_relNorth) + (poniKone ? 180f.Degrees() : default);
+        var manaSupportEast = _config.P123ManaStrategy ? ManaEastSlot(true, Sign.Bind1, Sign.Bind2) : -1;
+        var manaDDEast = _config.P123ManaStrategy ? ManaEastSlot(false, Sign.Attack1, Sign.Attack2) : -1;
         for (var i = 0; i < States.Length; ++i)
         {
             var player = Raid[i];
@@ -226,27 +247,66 @@ sealed class P3UltimateRelativity(BossModule module) : Components.CastCounter(mo
 
             ref var state = ref States[i];
             var isSupport = player.Class.IsSupport();
-            var eastSlot = eastFlex[isSupport ? 0 : 1].slot;
+            var manaEast = isSupport ? manaSupportEast : manaDDEast;
+            var eastSlot = _config.P123ManaStrategy && manaEast >= 0 ? manaEast : eastFlex[isSupport ? 0 : 1].slot;
             bool? preferEast = eastSlot >= 0 ? eastSlot == i : null;
-            var dir = player.Class.IsSupport() ? SupportDir(state.FireOrder, preferEast) : DDDir(state.FireOrder, preferEast);
+            var dir = player.Class.IsSupport() ? SupportDir(state.FireOrder, preferEast, poniKone) : DDDir(state.FireOrder, preferEast, poniKone);
             //if (dir != null)
             //    state.AssignedDir = (northDir + dir.Value).ToDirection();
             // Fixing support fire 10 assignment not drawing - Topas 2026/05/03
-            state.AssignedDir = dir != null ? (northDir + dir.Value).ToDirection() : northDir.ToDirection();
+            state.AssignedDir = dir != null ? (northDir + dir.Value).ToDirection() : _config.P123ManaStrategy ? default : northDir.ToDirection();
         }
     }
 
-    private static Angle? SupportDir(int fireOrder, bool? preferEast) => fireOrder switch
+    private int ManaEastSlot(bool support, Sign westSign, Sign eastSign)
     {
-        2 => 90f.Degrees(),
-        3 => preferEast == null ? null : preferEast.Value ? -45f.Degrees() : 45f.Degrees(),
+        var west = WorldState.Waymarks[westSign];
+        var east = WorldState.Waymarks[eastSign];
+        if (west == east)
+            return -1;
+
+        var westSlot = -1;
+        var eastSlot = -1;
+        Span<int> candidates = [-1, -1];
+        var count = 0;
+        for (var i = 0; i < States.Length; ++i)
+        {
+            var player = Raid[i];
+            if (player == null || player.Class.IsSupport() != support || States[i].FireOrder != (support ? 3 : 1))
+                continue;
+            if (count < 2)
+                candidates[count] = i;
+            ++count;
+            if (west != 0 && player.InstanceID == west)
+                westSlot = i;
+            if (east != 0 && player.InstanceID == east)
+                eastSlot = i;
+        }
+        if (count != 2)
+            return -1;
+        // one of the pair forgot to mark: they take the remaining side; nobody marked: caller falls back to config priority
+        if (eastSlot < 0 && westSlot >= 0)
+            eastSlot = candidates[0] == westSlot ? candidates[1] : candidates[0];
+        return eastSlot;
+    }
+
+    private static Angle? SupportDir(int fireOrder, bool? preferEast, bool poniKone) => (poniKone, fireOrder) switch
+    {
+        (true, 2) => 90f.Degrees(),
+        (true, 3) => preferEast == null ? null : preferEast.Value ? -135f.Degrees() : 135f.Degrees(),
+        (true, _) => 180f.Degrees(),
+        (false, 2) => 90f.Degrees(),
+        (false, 3) => preferEast == null ? null : preferEast.Value ? -45f.Degrees() : 45f.Degrees(),
         _ => default
     };
 
-    private static Angle? DDDir(int fireOrder, bool? preferEast) => fireOrder switch
+    private static Angle? DDDir(int fireOrder, bool? preferEast, bool poniKone) => (poniKone, fireOrder) switch
     {
-        1 => preferEast == null ? null : preferEast.Value ? -135f.Degrees() : 135f.Degrees(),
-        2 => -90f.Degrees(),
+        (true, 1) => preferEast == null ? null : preferEast.Value ? -45f.Degrees() : 45f.Degrees(),
+        (true, 2) => -90f.Degrees(),
+        (true, _) => 0f.Degrees(), // long fire / ice takes the single yellow hourglass, which is relative north in poni kone
+        (false, 1) => preferEast == null ? null : preferEast.Value ? -135f.Degrees() : 135f.Degrees(),
+        (false, 2) => -90f.Degrees(),
         _ => 180f.Degrees()
     };
 
@@ -285,7 +345,22 @@ sealed class P3UltimateRelativity(BossModule module) : Components.CastCounter(mo
         var assignedDir = States[slot].AssignedDir;
         var safespot = Arena.Center + range * assignedDir;
         if (IsBaitingLaser(States[slot], NumCasts) && LaserRotationAt(safespot) is var rot && rot != default)
+        {
+            // preferred: 67.5deg against rotation, so the 9x15deg sweep stays on the outer side; but the previous set's beams are
+            // still sweeping when we bait, so step towards/away from radial until the spot is clear of them
+            // (offsets -142.5..+22.5 relative to rotation keep our own sweep off the centre stack)
+            var hourglass = safespot;
+            var baitAt = LaserRotations.FirstOrDefault(r => r.origin.Position.AlmostEqual(hourglass, 1f)).activation;
+            var beams = Module.FindComponent<P3UltimateRelativitySinboundMeltdownAOE>()?.ActiveAOEs(slot, Raid[slot]!).ToArray() ?? [];
+            ReadOnlySpan<int> steps = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6];
+            foreach (var k in steps)
+            {
+                var candidate = hourglass + 1.5f * (Angle.FromDirection(assignedDir) - (4.5f - k) * rot).ToDirection();
+                if (!beams.Any(b => Math.Abs((b.Activation - baitAt).TotalSeconds) < 1.5d && b.Shape.Distance(b.Origin, b.Rotation).Distance(candidate) < 1f))
+                    return candidate;
+            }
             safespot += 1.5f * (Angle.FromDirection(assignedDir) - 4.5f * rot).ToDirection();
+        }
         return safespot;
     }
 }

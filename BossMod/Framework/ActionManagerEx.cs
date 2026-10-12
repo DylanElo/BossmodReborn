@@ -1,5 +1,6 @@
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
+using Dalamud.Plugin.Ipc;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
@@ -64,6 +65,9 @@ public sealed unsafe class ActionManagerEx : IDisposable
     private readonly SmartRotationTweak _smartRotationTweak;
     private readonly OutOfCombatActionsTweak _oocActionsTweak;
     private readonly AutoAutosTweak _autoAutosTweak;
+    private readonly ICallGateSubscriber<uint, float, float, int> _plannedMchUtilityWeave;
+    private (uint action, ulong target, string reason) _lastPlannedMchDecision;
+    private DateTime _nextPlannedMchDecisionLog;
 
     private readonly HookAddress<ActionManager.Delegates.Update> _updateHook;
     private readonly HookAddress<ActionManager.Delegates.UseAction> _useActionHook;
@@ -97,6 +101,7 @@ public sealed unsafe class ActionManagerEx : IDisposable
         _smartRotationTweak = new(ws, hints);
         _oocActionsTweak = new(ws);
         _autoAutosTweak = new(ws, hints);
+        _plannedMchUtilityWeave = Service.PluginInterface.GetIpcSubscriber<uint, float, float, int>("RotationSolverReborn.PlannedMchUtilityWeave");
 
         Service.Log($"[AMEx] ActionManager singleton address = 0x{(ulong)_inst:X}");
         _updateHook = new(ActionManager.Addresses.Update, UpdateDetour);
@@ -417,6 +422,42 @@ public sealed unsafe class ActionManagerEx : IDisposable
         }
     }
 
+    private bool AllowPlannedMchUtility(ActionID action)
+    {
+        if (!AutoQueue.PlannedMchUtility || AutoQueue.Manual)
+            return true;
+        if (!float.IsFinite(AutoQueue.Expire) || AutoQueue.Expire <= 0)
+        {
+            LogPlannedMchDecision(action, "expired", false, 0);
+            return false;
+        }
+        var animationLock = 0f;
+        try
+        {
+            // BMR owns the resolved target and plan conditions; RSR supplies only the current weave budget.
+            animationLock = (ActionDefinitions.Instance[action]?.InstantAnimLock ?? 0.6f) + _animLockTweak.DelayEstimate;
+            var decision = _plannedMchUtilityWeave.InvokeFunc(action.ID, animationLock, AutoQueue.Expire);
+            LogPlannedMchDecision(action, decision switch { 0 => "native-fallback", 1 => "wait", 2 => "safe", 3 => "urgent", _ => "unknown-native-fallback" }, decision != 1, animationLock);
+            return decision != 1;
+        }
+        catch (Exception ex)
+        {
+            LogPlannedMchDecision(action, $"ipc-fallback:{ex.GetType().Name}", true, animationLock);
+            return true; // Missing/disabled RSR retains native mitigation execution.
+        }
+    }
+
+    private void LogPlannedMchDecision(ActionID action, string reason, bool allowed, float actionLock)
+    {
+        var key = (action.ID, AutoQueue.Target?.InstanceID ?? InvalidEntityId, reason);
+        // Same decision can recur every frame while waiting; retain transitions and at most one reminder per second.
+        if (key == _lastPlannedMchDecision && _ws.CurrentTime < _nextPlannedMchDecisionLog)
+            return;
+        _lastPlannedMchDecision = key;
+        _nextPlannedMchDecisionLog = _ws.CurrentTime.AddSeconds(1);
+        Service.Logger.Information($"[MCH planner weave] decision action={action} target={key.Item2:X} allowed={allowed} reason={reason} deadline={AutoQueue.Expire:f3}s requestedLock={actionLock:f3}s nativeGCD={GCD():f3}s nativeLock={EffectiveAnimationLock:f3}s");
+    }
+
     private Angle? CalculateDesiredOrientation(bool actionImminent)
     {
         if (actionImminent && AutoQueue.FacingAngle != null)
@@ -506,12 +547,18 @@ public sealed unsafe class ActionManagerEx : IDisposable
             var actionAdj = NormalizeActionForQueue(AutoQueue.Action);
             var targetID = AutoQueue.Target?.InstanceID ?? InvalidEntityId;
             var status = GetActionStatus(actionAdj, targetID);
-            if (status == 0)
+            if (status == 0 && AllowPlannedMchUtility(actionAdj))
             {
                 // disable in-game auto rotation, to prevent fucking up with our logic
                 autoRotateConfig->Value.UInt = SmartRotationTweak.Enabled || AI.AIManager.Instance?.Beh != null ? 0 : autoRotateOriginal;
                 var res = ExecuteAction(actionAdj, targetID, AutoQueue.TargetPos);
+                if (res && AutoQueue.PlannedMchUtility)
+                    Service.Logger.Information($"[MCH planner weave] BMR request accepted action={actionAdj} target={targetID:X} deadline={AutoQueue.Expire:f3}s nativeGCD={GCD():f3}s");
                 //Service.Log($"[AMEx] Auto-execute {AutoQueue.Source} action {AutoQueue.Action} (=> {actionAdj}) @ {targetID:X} {Utils.Vec3String(AutoQueue.TargetPos)} => {res}");
+            }
+            else if (status == 0)
+            {
+                // RSR needs this slot for its GCD/burst handoff. Re-evaluate the native plan next frame.
             }
             else if (_dismountTweak.IsMountPreventingAction(actionAdj))
             {

@@ -27,6 +27,11 @@ sealed class P2IcicleImpact(BossModule module) : Components.GenericAOEs(module, 
             case (uint)AID.IcicleImpact:
                 ++NumCasts;
                 break;
+            case (uint)AID.AxeKick:
+                // axe kick -> first circles is only ~2.7s, proteans resolve 0.8s in: players standing under the first circles must start
+                // running in as soon as the kick is out (moving in keeps them among the 4 closest anyway)
+                MarkAsRisky(0, Math.Min(2, AOEs.Count));
+                break;
             case (uint)AID.HouseOfLight:
                 // after proteans are baited, first two aoes become risky; remaining are still not - stones are supposed to be baited into them
                 MarkAsRisky(0, Math.Min(2, AOEs.Count));
@@ -192,9 +197,14 @@ sealed class P2DiamondDustSafespots(BossModule module) : BossComponent(module)
         }
     }
 
-    public override void OnCastFinished(Actor caster, ActorCastInfo spell)
+    // the kick's damage event arrives ~0.8s before the cast is reported finished; the first circles land 2.7s after axe kick,
+    // so players under them need every bit of that (a 0.2y miss in logs) - react to whichever comes first (both are idempotent)
+    public override void OnEventCast(Actor caster, ActorCastEvent spell) => OnKickDone(spell.Action.ID);
+    public override void OnCastFinished(Actor caster, ActorCastInfo spell) => OnKickDone(spell.Action.ID);
+
+    private void OnKickDone(uint aid)
     {
-        switch (spell.Action.ID)
+        switch (aid)
         {
             case (uint)AID.AxeKick:
                 // out done => cone baiters go in, ice baiters stay
@@ -264,14 +274,14 @@ sealed class P2HeavenlyStrike(BossModule module) : Components.GenericKnockback(m
             Arena.ZoneCircleOutline(Arena.Center + 18f * _safeDirs[pcSlot], 1f, Colors.Safe);
     }
 
-    private static WDir[] BuildSafeDirs(BossModule module)
+    internal static WDir[] BuildSafeDirs(BossModule module)
     {
         var res = new WDir[PartyState.MaxPartySize];
         var icicle = module.FindComponent<P2IcicleImpact>();
         if (icicle?.AOEs.Count > 0)
         {
             var safeDir = (icicle.AOEs.Ref(0).Origin - module.Center).Normalized();
-            if (safeDir.X > 0.5f || safeDir.Z > 0.8f)
+            if (Service.Config.Get<FRUConfig>().P123ManaStrategy ? safeDir.X > 0.8f || safeDir.Z > 0.5f : safeDir.X > 0.5f || safeDir.Z > 0.8f)
                 safeDir = -safeDir; // G1
             foreach (var (slot, group) in Service.Config.Get<FRUConfig>().P2DiamondDustKnockbacks.Resolve(module.Raid))
                 res[slot] = group == 1 ? -safeDir : safeDir;
@@ -286,6 +296,9 @@ sealed class P2SinboundHoly(BossModule module) : Components.UniformStackSpread(m
     private DateTime _nextExplosion;
     private readonly WDir _destinationDir = CalculateDestination(module);
     private readonly WPos[] _initialSpots = new WPos[PartyState.MaxPartySize];
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
+    private readonly WDir[] _manaStartDirs = P2HeavenlyStrike.BuildSafeDirs(module);
+    private readonly P2FrigidNeedleCross? _manaStars = module.FindComponent<P2FrigidNeedleCross>();
 
     private static WDir CalculateDestination(BossModule module)
     {
@@ -309,6 +322,11 @@ sealed class P2SinboundHoly(BossModule module) : Components.UniformStackSpread(m
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
+        if (_config.P123ManaStrategy)
+        {
+            AddManaAIHints(slot, actor, assignment, hints);
+            return;
+        }
         var master = actor.Role != Role.Healer ? Stacks.MinBy(s => (s.Target.Position - actor.Position).LengthSq()).Target : null;
         if (master != null && ((master.Position - actor.Position).LengthSq() > 100f || (master.Position - Arena.Center).LengthSq() < 196f))
             master = null; // our closest healer is too far away or too close to center, something is wrong (maybe kb didn't finish yet, or healer fucked up)
@@ -350,6 +368,83 @@ sealed class P2SinboundHoly(BossModule module) : Components.UniformStackSpread(m
         hints.AddForbiddenZone(new SDHalfPlane(Arena.Center + planeOffset * preferredDir, preferredDir), hintTime);
     }
 
+    // The four Mana cases are relative to the original knockback camps, not the player's current position.
+    internal static (WDir destination, bool clockwise, bool fast, WDir meeting) ManaRoute(WDir start, WDir oracle, int numCasts, bool starsResolved = true)
+    {
+        if (!starsResolved)
+            return (start, true, false, default);
+        var aligned = Math.Abs(start.Dot(oracle));
+        if (aligned > 0.9f) // case 1: both camps run CW 180 degrees
+            return (start.Rotate(-180f.Degrees()), true, true, default);
+        if (aligned < 0.1f) // case 2: both camps run slowly CW 90 degrees
+            return (start.Rotate((-30f * Math.Min(numCasts, 3)).Degrees()), true, false, default);
+        if (Math.Abs(start.Rotate(45f.Degrees()).Dot(oracle)) > 0.9f) // case 3: both camps run quickly CW 135 degrees
+            return (start.Rotate(-135f.Degrees()), true, true, default);
+
+        // Case 4: near camp CCW, far camp CW. Keep the final stacks separated before the slanted slide.
+        var clockwise = start.Dot(oracle) < 0;
+        var travel = 70f * Math.Min(numCasts, 3) / 3f;
+        var meeting = start.Rotate((clockwise ? -90f : 90f).Degrees());
+        return (numCasts >= 4 ? meeting : start.Rotate((clockwise ? -travel : travel).Degrees()), clockwise, false, meeting);
+    }
+
+    internal static bool ManaFastArrived(WDir start, WDir current, WDir destination)
+    {
+        var progress = (Angle.FromDirection(start) - Angle.FromDirection(current)).Normalized().Deg;
+        if (progress < -15f)
+            progress += 360f; // retain progress past 180 degrees rather than orbiting after a late frame
+        var travel = Math.Abs((Angle.FromDirection(start) - Angle.FromDirection(destination)).Normalized().Deg);
+        return progress >= travel - 3f;
+    }
+
+    private void AddManaAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        var group = _config.P2DiamondDustKnockbacks[assignment];
+        var oracle = Module.Enemies((uint)OID.OraclesReflection).FirstOrDefault();
+        if (group < 0 || _manaStartDirs[slot] == default || oracle == null)
+            return; // incomplete inputs: do not guess a camp or route
+        var oracleOffset = oracle.Position - Arena.Center;
+        if (oracleOffset.LengthSq() < 100f)
+            return; // reflection has not teleported yet
+        var oracleDir = oracleOffset.Normalized();
+
+        var healerRole = _config.P2DiamondDustKnockbacks[PartyRolesConfig.Assignment.H1] == group ? PartyRolesConfig.Assignment.H1 : PartyRolesConfig.Assignment.H2;
+        if (_config.P2DiamondDustKnockbacks[healerRole] != group)
+            return;
+        var healerSlot = Service.Config.Get<PartyRolesConfig>().SlotsPerAssignment(Raid);
+        var master = healerSlot.Length > (int)healerRole ? Raid[healerSlot[(int)healerRole]] : null;
+        if (master == null || master.IsDead || !Stacks.Any(s => s.Target == master))
+            return; // never substitute the other camp's healer
+
+        // Holy activates while the Stars state is still waiting; do not depart or request Sprint early.
+        var starsResolved = _manaStars is { NumCasts: > 0 };
+        var route = ManaRoute(_manaStartDirs[slot], oracleDir, NumCasts, starsResolved);
+        if (!starsResolved)
+        {
+            hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + 18f * route.destination, 1f), WorldState.FutureTime(50d));
+            return;
+        }
+        if (actor != master)
+        {
+            var moveDir = master.LastFrameMovement.Normalized();
+            hints.AddForbiddenZone(new SDInvertedCapsule(master.Position + 2f * moveDir, moveDir, 4f, 1.5f), DateTime.MaxValue);
+        }
+
+        var currentDir = (actor.Position - Arena.Center).Normalized();
+        hints.AddForbiddenZone(new SDCircle(Arena.Center, 16f), WorldState.FutureTime(50d));
+        if (route.fast && !ManaFastArrived(_manaStartDirs[slot], currentDir, route.destination))
+        {
+            var tangent = currentDir.OrthoR();
+            hints.AddForbiddenZone(new SDHalfPlane(actor.Position + 2f * tangent, tangent), WorldState.FutureTime(50d));
+            hints.ActionsToExecute.Push(ActionID.MakeSpell(ClassShared.AID.Sprint), actor, ActionQueue.Priority.High);
+        }
+        else
+        {
+            // Slow cases advance once per real stack pulse, preventing both camps from rushing together.
+            hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + 18f * route.destination, 1f), WorldState.FutureTime(50d));
+        }
+    }
+
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {
         if (spell.Action.ID == (uint)AID.SinboundHoly)
@@ -371,6 +466,13 @@ sealed class P2SinboundHoly(BossModule module) : Components.UniformStackSpread(m
             }
 
             ++NumCasts;
+            if (_config.P123ManaStrategy && NumCasts == 4 && Module.Enemies((uint)OID.OraclesReflection).FirstOrDefault() is { } oracle)
+            {
+                var start = _manaStartDirs.FirstOrDefault(d => d != default);
+                var offset = oracle.Position - Arena.Center;
+                if (start != default && offset.LengthSq() >= 100f && Module.FindComponent<P2TwinStillnessSilence>() is { } twin)
+                    twin.ManaHolyMeetingDirection = ManaRoute(start, offset.Normalized(), NumCasts).meeting;
+            }
             _nextExplosion = WorldState.FutureTime(0.5d);
         }
     }
@@ -426,6 +528,7 @@ sealed class P2ShiningArmor(BossModule module) : Components.GenericGaze(module, 
 sealed class P2TwinStillnessSilence(BossModule module) : Components.GenericAOEs(module)
 {
     public readonly List<AOEInstance> AOEs = [];
+    public WDir ManaHolyMeetingDirection;
     private readonly Actor? _source = module.GetActor((uint)OID.OraclesReflection);
     private BitMask _thinIce;
     private readonly WPos[] _slideBackPos = new WPos[PartyState.MaxPartySize]; // used for hints only
@@ -442,6 +545,11 @@ sealed class P2TwinStillnessSilence(BossModule module) : Components.GenericAOEs(
 
     public override ReadOnlySpan<AOEInstance> ActiveAOEs(int slot, Actor actor) => AOEs.Count != 0 ? CollectionsMarshal.AsSpan(AOEs)[..1] : [];
 
+    // both cones also hit anyone standing inside the reflection itself (1.0y behind was hit). Logged survivors sat 5.5-6.4y behind
+    // (a 4.9y hit was the back cone); at 6.6y the straight slide from the south (lands ~5y behind) was forbidden and the AI froze
+    public const float PointBlankRadius = 3f;
+    public static bool Hits(in AOEInstance aoe, WPos pos) => aoe.Check(pos) || pos.InCircle(aoe.Origin, PointBlankRadius);
+
     public override void Update()
     {
         if (AOEs.Count != 2)
@@ -453,6 +561,12 @@ sealed class P2TwinStillnessSilence(BossModule module) : Components.GenericAOEs(
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
+        if (_voidzones == null && ManaHolyMeetingDirection != default)
+        {
+            // After both fourth stacks, converge at Mana's 135-degree meeting point before gaze/ice.
+            hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + 18f * ManaHolyMeetingDirection, 1f), WorldState.FutureTime(50d));
+            return;
+        }
         if (_voidzones == null || _source == null)
             return;
 
@@ -491,7 +605,7 @@ sealed class P2TwinStillnessSilence(BossModule module) : Components.GenericAOEs(
         {
             // at this point, we have thin ice, so we can either stay or move fixed distance
             var sourceOffset = _source.Position - Arena.Center;
-            var needToMove = AOEs.Count > 0 ? AOEs[0].Check(actor.Position) : NumCasts == 0 && sourceOffset.Dot(actor.Position - Arena.Center) > 0;
+            var needToMove = AOEs.Count > 0 ? Hits(AOEs[0], actor.Position) : NumCasts == 0 && sourceOffset.Dot(actor.Position - Arena.Center) > 0;
             if (!needToMove)
                 return;
 
@@ -528,6 +642,8 @@ sealed class P2TwinStillnessSilence(BossModule module) : Components.GenericAOEs(
                 // dodge next aoe
                 ref var nextAOE = ref AOEs.Ref(0);
                 zoneList.ForbidInfiniteCone(nextAOE.Origin, nextAOE.Rotation, ((AOEShapeCone)nextAOE.Shape).HalfAngle);
+                if (!actor.Position.InCircle(nextAOE.Origin, PointBlankRadius))
+                    zoneList.ForbidCircle(nextAOE.Origin, PointBlankRadius); // from inside, any 32y slide leaves it
 
                 // prefer to return to the starting spot, for more natural preposition for next mechanic
                 if (AOEs.Count == 1 && _slideBackPos[slot] != default && !zoneList.Forbidden.Contains(Angle.FromDirection(_slideBackPos[slot] - actor.Position).Rad))
@@ -596,7 +712,7 @@ sealed class P2ThinIce(BossModule module) : Components.ThinIce(module, 32f)
             for (var i = 0; i < len; ++i)
             {
                 ref readonly var aoe = ref aoes[i];
-                if (aoe.Check(pos))
+                if (P2TwinStillnessSilence.Hits(aoe, pos))
                 {
                     return true;
                 }

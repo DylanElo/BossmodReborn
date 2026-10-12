@@ -13,9 +13,20 @@ sealed class P4AkhRhai(BossModule module) : Components.GenericAOEs(module, (uint
         if (AOEs.Count == 0)
         {
             // preposition for baits - note that this is very arbitrary...
-            var off = 10f * 45f.Degrees().ToDirection();
             var center = Arena.Center;
-            hints.AddForbiddenZone(new SDInvertedUnion([new SDCircle(center + off, 1f), new SDCircle(center - off, 1f)]), DateTime.MaxValue);
+            if (Service.Config.Get<FRUConfig>().P4ManaStrategy)
+            {
+                var boss = ((FRU)Module).BossP4Usurper();
+                if (boss == null)
+                    return;
+                var off = new WDir(7.071068f, boss.Position.Z < center.Z ? -7.071068f : 7.071068f);
+                hints.AddForbiddenZone(new SDInvertedUnion([new SDCircle(center + off, 1f), new SDCircle(center + new WDir(-off.X, off.Z), 1f)]), DateTime.MaxValue);
+            }
+            else
+            {
+                var off = 10f * 45f.Degrees().ToDirection();
+                hints.AddForbiddenZone(new SDInvertedUnion([new SDCircle(center + off, 1f), new SDCircle(center - off, 1f)]), DateTime.MaxValue);
+            }
         }
     }
 

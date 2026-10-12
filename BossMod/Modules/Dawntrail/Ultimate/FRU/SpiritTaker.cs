@@ -17,9 +17,12 @@ abstract class SpiritTaker(BossModule module) : Components.GenericStackSpread(mo
             var activation = Module.CastFinishAt(spell, 0.3d);
             foreach (var (i, p) in Raid.WithSlot(true, true, true))
             {
-                // TODO: i think this is right - we can't clip the entire hitbox of the fragment?..
-                Spreads.Add(new(p, Radius + (i < PartyState.MaxPartySize ? 0 : p.HitboxRadius), activation));
+                Spreads.Add(new(p, Radius, activation));
             }
+            // Fragment is an encounter actor, not necessarily a party NPC. P3 has none.
+            foreach (var fragment in Module.Enemies((uint)OID.FragmentOfFate))
+                if (!fragment.IsDeadOrDestroyed)
+                    Spreads.Add(new(fragment, Radius + fragment.HitboxRadius, activation));
         }
     }
 

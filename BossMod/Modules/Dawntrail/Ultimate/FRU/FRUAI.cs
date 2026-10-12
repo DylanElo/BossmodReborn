@@ -16,7 +16,7 @@ sealed class FRUAI(RotationModuleManager manager, Actor player) : AIRotationModu
         res.Define(Track.Movement).As<MovementStrategy>("Movement", "Movement")
             .AddOption(MovementStrategy.None, "No automatic movement")
             .AddOption(MovementStrategy.Pathfind, "Use standard pathfinding to move")
-            .AddOption(MovementStrategy.PathfindMeleeGreed, "Melee greed: find closest safespot, then move to maxmelee closest to it")
+            .AddOption(MovementStrategy.PathfindMeleeGreed, "Prefer melee range while respecting mechanic constraints")
             .AddOption(MovementStrategy.Explicit, "Move to specific point", supportedTargets: ActionTargets.Area)
             .AddOption(MovementStrategy.ExplicitMelee, "Move to the point in maxmelee that is closest to specific point", supportedTargets: ActionTargets.Area)
             .AddOption(MovementStrategy.Prepull, "Pre-pull position: as close to the clock-spot as possible")
@@ -49,8 +49,17 @@ sealed class FRUAI(RotationModuleManager manager, Actor player) : AIRotationModu
     // TODO: account for leeway for casters
     private WPos PathfindPosition(Actor? meleeGreedTarget)
     {
-        var res = NavigationDecision.Build(NavigationContext, World.CurrentTime, Hints, Player, Speed());
-        return meleeGreedTarget != null && res.Destination != null ? ClosestInMelee(res.Destination.Value, meleeGreedTarget) : (res.Destination ?? Player.Position);
+        if (meleeGreedTarget != null)
+            Hints.GoalZones.Add(AIHints.GoalSingleTarget(meleeGreedTarget, Positional.Any));
+        try
+        {
+            return NavigationDecision.Build(NavigationContext, World.CurrentTime, Hints, Player, Speed()).Destination ?? Player.Position;
+        }
+        finally
+        {
+            if (meleeGreedTarget != null)
+                Hints.GoalZones.RemoveAt(Hints.GoalZones.Count - 1);
+        }
     }
 
     private WPos ExplicitMeleePosition(WPos ideal, Actor? target) => target != null ? ClosestInMelee(ideal, target) : ideal;
@@ -59,7 +68,7 @@ sealed class FRUAI(RotationModuleManager manager, Actor player) : AIRotationModu
     private WPos PrepullPosition(FRU module, PartyRolesConfig.Assignment assignment)
     {
         var safeRange = 12.5f;
-        var desiredRange = assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 ? 5 : 10;
+        var desiredRange = assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 ? 5 : 10;
         var dir = _config.P1CyclonicBreakSpots[assignment];
         if (dir < 0)
             dir = 0;

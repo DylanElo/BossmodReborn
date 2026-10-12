@@ -3,6 +3,9 @@
 [ConfigDisplay(Order = 0x200, Parent = typeof(DawntrailConfig))]
 public sealed class FRUConfig() : ConfigNode()
 {
+    [PropertyDisplay("Mana strategy for P1-P3 (assignments and movement)")]
+    public bool P123ManaStrategy = false;
+
     // TODO: fixed tethers option
     [PropertyDisplay("P1 Bound of Faith (light party tethers): group assignments & flex priority (lower number flexes)")]
     [GroupDetails(["N prio 1", "N prio 2", "N prio 3", "N prio 4", "S prio 1", "S prio 2", "S prio 3", "S prio 4"])]
@@ -21,8 +24,8 @@ public sealed class FRUConfig() : ConfigNode()
 
     [PropertyDisplay("P1 Explosions: tower fill priority (lower number goes north)")]
     [GroupDetails(["Tank N", "Tank S", "Fixed N", "Fixed Center", "Fixed S", "Flex 1", "Flex 2", "Flex 3"])]
-    [GroupPreset("H1-R2-H2 fixed, M1-M2-R1 flex", [0, 1, 2, 4, 5, 6, 7, 3])]
-    public GroupAssignmentUnique P1ExplosionsAssignment = new() { Assignments = [0, 1, 2, 4, 5, 6, 7, 3] };
+    [GroupPreset("H1-H2-R2 fixed, M1-M2-R1 flex", [0, 1, 2, 3, 5, 6, 7, 4])]
+    public GroupAssignmentUnique P1ExplosionsAssignment = new() { Assignments = [0, 1, 2, 3, 5, 6, 7, 4] };
 
     [PropertyDisplay("P1 Explosions: flex roles only fill 3/4 if their natural tower is 1 (instead of doing conga)")]
     public bool P1ExplosionsPriorityFill;
@@ -55,6 +58,9 @@ public sealed class FRUConfig() : ConfigNode()
     [GroupPreset("HTTH/RMMR", [1, 2, 0, 3, 1, 2, 0, 3])]
     public GroupAssignmentDDSupportPairs P3UltimateRelativityAssignment = GroupAssignmentDDSupportPairs.DefaultMeleeTogether();
 
+    [PropertyDisplay("P3 Ultimate Relativity: use Poni Kone orientation (single yellow tether is north)")]
+    public bool P3UltimateRelativityPoniKone = true;
+
     [PropertyDisplay("P3 Apocalypse: assignments (G1 CCW from N, G2 CW from NE, in case of conflict 'lower' number flexes)")]
     [GroupDetails(["G1 prio1", "G1 prio2", "G1 prio3", "G1 prio4", "G2 prio1", "G2 prio2", "G2 prio3", "G2 prio4"])]
     [GroupPreset("TTHH/MMRR", [0, 1, 2, 3, 4, 5, 6, 7])]
@@ -67,7 +73,10 @@ public sealed class FRUConfig() : ConfigNode()
     [PropertyDisplay("P3 Apocalypse: ignore swaps and use initial static positions for spreads")]
     public bool P3ApocalypseStaticSpreads;
 
-    [PropertyDisplay("P4 Darklit Dragonsong: assignments (lower prio stays more clockwise, lowest prio support takes N tower)")]
+    [PropertyDisplay("P4: Mana / Nukemaru strategy", tooltip: "Alternating 7:1 Akh Morn, attack-marker puddles, near-center Y rewind and role spreads. Requires correct party roles and blue attack markers 1-4.")]
+    public bool P4ManaStrategy;
+
+    [PropertyDisplay("P4 Darklit Dragonsong: legacy assignments (Mana uses horizontal party roles)")]
     [GroupDetails(["Support prio1", "Support prio2", "Support prio3", "Support prio4", "DD prio1", "DD prio2", "DD prio3", "DD prio4"])]
     [GroupPreset("Default (healer N)", [2, 3, 0, 1, 4, 5, 6, 7])]
     public GroupAssignmentUnique P4DarklitDragonsongAssignments = new() { Assignments = [2, 3, 0, 1, 4, 5, 6, 7] };
@@ -137,6 +146,9 @@ public sealed class FRUConfig() : ConfigNode()
     [PropertyDisplay("P3 Apocalypse: dark water 1 direction for group 1 (group 2 is opposite)", tooltip: "Only used by AI")]
     [PropertySlider(-180, 180)]
     public float P3ApocalypseDarkWater1ReferenceDirection = -90;
+
+    [PropertyDisplay("P3 Apocalypse: use Mana guide dark water 1 box (T/H NNW, DPS SSE)", tooltip: "Only used by AI")]
+    public bool P3ApocalypseManaDarkWater1 = true;
 
     [PropertyDisplay("P3 Darkest Dance: baiter", tooltip: "Only used by AI")]
     [PropertyCombo("MT", "OT")]

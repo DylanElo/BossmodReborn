@@ -11,12 +11,24 @@ sealed class P5FulgentBlade : Components.Exaflare
         ImminentColor = Colors.AOE;
     }
 
+    public override void AddHints(int slot, Actor actor, TextHints hints)
+    {
+        base.AddHints(slot, actor, hints);
+        if (Lines.Count != 0 && NumCasts < 5 && ((FRU)Module).BossP5()?.TargetID == actor.InstanceID)
+            hints.Add("MT: stay near the inner diamond corner to preserve Akh Morn facing", false);
+    }
+
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
         base.AddAIHints(slot, actor, assignment, hints);
         // add an extra hint to move to safe spot (TODO: reconsider? this can fuck up positionals for melee etc)
-        if (Lines.Count != 0 && NumCasts <= 6 && SafeSpot() is var safespot && safespot != default)
-            hints.AddForbiddenZone(new SDInvertedCircle(safespot, 1f), DateTime.MaxValue);
+        if (Lines.Count != 0 && NumCasts <= 6 && SafeSpot(actor) is var safespot && safespot != default)
+        {
+            var innerMT = IsInnerCornerMT(actor);
+            hints.AddForbiddenZone(new SDInvertedCircle(safespot, innerMT ? 0.5f : 1f), DateTime.MaxValue);
+            if (innerMT)
+                hints.GoalZones.Add(AIHints.GoalProximity(safespot, 1f, 2f));
+        }
         //if (Lines.Count > 0 && NumCasts <= 6 && _lines.Count == 6)
         //{
         //    var shape = NumCasts switch
@@ -32,9 +44,9 @@ sealed class P5FulgentBlade : Components.Exaflare
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
-        var safespot = SafeSpot();
+        var safespot = SafeSpot(pc);
         if (safespot != default)
-            Arena.ZoneCircleOutline(safespot, 1f, Colors.Safe);
+            Arena.ZoneCircleOutline(safespot, IsInnerCornerMT(pc) ? 0.5f : 1f, Colors.Safe);
     }
 
     public override void OnActorCreated(Actor actor)
@@ -110,12 +122,12 @@ sealed class P5FulgentBlade : Components.Exaflare
         }
     }
 
-    private WPos SafeSpot()
+    private WPos SafeSpot(Actor? actor = null)
     {
         if (Lines.Count == 0 || _lines.Count != 6)
             return default; // not enough data
 
-        return NumCasts switch
+        var shared = NumCasts switch
         {
             < 2 => SafeSpot(0, 1, 11), // prepare to dodge into third exaline of the first pair
             2 => SafeSpot(0, 1, 9), // dodge into third exaline of the first pair
@@ -124,6 +136,81 @@ sealed class P5FulgentBlade : Components.Exaflare
             5 => SafeSpot(4, 5, 11), // prepare to dodge into third exaline of the third pair
             _ => SafeSpot(4, 5, 9), // dodge into third exaline of the third pair
         };
+        if (actor != null && IsInnerCornerMT(actor))
+        {
+            var inner = InnerCorner(shared, NumCasts < 3 ? 0 : 2);
+            if (inner != default)
+                return inner;
+        }
+        return shared;
+    }
+
+    private bool IsInnerCornerMT(Actor actor) => Service.Config.Get<FRUConfig>().P4ManaStrategy && NumCasts is >= 2 and <= 4 && ((FRU)Module).BossP5()?.TargetID == actor.InstanceID;
+
+    // Stay in the selected pair's native wave cell; an unconstrained boss-proximity
+    // goal can select the arena center before the moving waves reach it.
+    private WPos InnerCorner(WPos shared, int pair)
+    {
+        var planes = new List<(WDir normal, float limit)>();
+        for (var i = pair; i < pair + 2; ++i)
+        {
+            var sourceDirection = _lines[i].dir;
+            var line = Lines.Find(l => l.Advance.Normalized().Dot(sourceDirection) < -0.99f);
+            if (line == null || Math.Abs(line.Advance.Length() - 5f) > 0.01f || line.ExplosionsLeft < 2)
+                return default;
+            var n = line.Advance.Normalized();
+            var depth = (shared - line.Next).Dot(n);
+            // Rectangle edges, not a window around the route point: behind the
+            // impending strip is the just-cleared cell; ahead is the next cell.
+            var step = line.Advance.Length();
+            var lower = depth < 0f ? -step + 1f : step + 1f;
+            var upper = depth < 0f ? -1f : 2f * step - 1f;
+            if (depth is >= 0f and <= 5f || depth < lower - 0.001f || depth > upper + 0.001f)
+                return default;
+            var origin = (line.Next - Arena.Center).Dot(n);
+            planes.Add((n, origin + upper));
+            planes.Add((-n, -origin - lower));
+        }
+        foreach (var line in Lines)
+        {
+            var n = line.Advance.Normalized();
+            var depth = (shared - line.Next).Dot(n);
+            // Every native strip spans the arena laterally; retain the same side
+            // of each active strip as the authored shared route.
+            if (depth < 0f)
+                planes.Add((n, (line.Next - Arena.Center).Dot(n) - 1f));
+            else if (depth > 5f)
+                planes.Add((-n, -(line.Next - Arena.Center).Dot(n) - 6f));
+            else
+                return default;
+        }
+        var best = default(WPos);
+        var bestDistance = float.MaxValue;
+        void Consider(WDir offset)
+        {
+            foreach (var (normal, limit) in planes)
+                if (offset.Dot(normal) > limit + 0.001f)
+                    return;
+            var pos = Arena.Center + offset;
+            if (!Arena.InBounds(pos) || offset.LengthSq() >= bestDistance)
+                return;
+            best = pos;
+            bestDistance = offset.LengthSq();
+        }
+        Consider(default);
+        for (var i = 0; i < planes.Count; ++i)
+        {
+            var (n, limit) = planes[i];
+            Consider(limit * n);
+            for (var j = 0; j < i; ++j)
+            {
+                var (m, other) = planes[j];
+                var determinant = n.Cross(m);
+                if (Math.Abs(determinant) > 0.001f)
+                    Consider(new((limit * m.Z - other * n.Z) / determinant, (other * n.X - limit * m.X) / determinant));
+            }
+        }
+        return best;
     }
 
     private WPos SafeSpot(int i1, int i2, float distance)

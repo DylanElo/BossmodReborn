@@ -8,7 +8,7 @@
 // - repeat the process until no more actions can be found
 public sealed class ActionQueue
 {
-    public readonly struct Entry(ActionID action, Actor? target, float priority, float expire, float delay, float castTime, Vector3 targetPos, Angle? facingAngle, bool manual, bool force)
+    public readonly struct Entry(ActionID action, Actor? target, float priority, float expire, float delay, float castTime, Vector3 targetPos, Angle? facingAngle, bool manual, bool force, bool plannedMchUtility = false)
     {
         public readonly ActionID Action = action;
         public readonly Actor? Target = target;
@@ -20,6 +20,7 @@ public sealed class ActionQueue
         public readonly Angle? FacingAngle = facingAngle;
         public readonly bool Manual = manual;
         public readonly bool Force = force;
+        public readonly bool PlannedMchUtility = plannedMchUtility;
     }
 
     // reference priority guidelines
@@ -50,7 +51,7 @@ public sealed class ActionQueue
     public readonly List<Entry> Entries = [];
 
     public void Clear() => Entries.Clear();
-    public void Push(in ActionID action, Actor? target, float priority, float expire = float.MaxValue, float delay = default, float castTime = default, Vector3 targetPos = default, Angle? facingAngle = null, bool manual = false, bool forced = false) => Entries.Add(new(action, target, priority, expire, delay, castTime, targetPos, facingAngle, manual, forced));
+    public void Push(in ActionID action, Actor? target, float priority, float expire = float.MaxValue, float delay = default, float castTime = default, Vector3 targetPos = default, Angle? facingAngle = null, bool manual = false, bool forced = false, bool plannedMchUtility = false) => Entries.Add(new(action, target, priority, expire, delay, castTime, targetPos, facingAngle, manual, forced, plannedMchUtility));
 
     public Entry FindBest(WorldState ws, Actor player, ReadOnlySpan<Cooldown> cooldowns, float animationLock, AIHints hints, float instantAnimLockDelay, bool allowDismount)
     {

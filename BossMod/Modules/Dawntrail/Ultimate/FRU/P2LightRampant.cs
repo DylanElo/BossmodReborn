@@ -3,6 +3,36 @@
 sealed class P2LightRampant(BossModule module) : BossComponent(module)
 {
     private readonly Actor?[] _tetherTargets = new Actor?[PartyState.MaxPartySize];
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
+    public bool ManaAssignmentsUnsafe = Service.Config.Get<FRUConfig>().P123ManaStrategy;
+
+    public override void Update()
+    {
+        if (!_config.P123ManaStrategy || Module.FindComponent<P2BrightHunger1>() is not { Towers.Count: 6 } towers)
+            return;
+        ManaAssignmentsUnsafe = _tetherTargets.Count(t => t != null) != 6;
+        if (ManaAssignmentsUnsafe)
+            return;
+        for (var slot = 0; slot < PartyState.MaxPartySize; ++slot)
+        {
+            if (_tetherTargets[slot] is not { } target)
+                continue;
+            var other = Raid.FindSlot(target.InstanceID);
+            var from = towers.Towers.FindIndex(t => !t.ForbiddenSoakers[slot]);
+            var to = other >= 0 ? towers.Towers.FindIndex(t => !t.ForbiddenSoakers[other]) : -1;
+            if (from < 0 || to < 0 || (towers.Towers[from].Position - towers.Towers[to].Position).LengthSq() < 625f)
+            {
+                ManaAssignmentsUnsafe = true;
+                return;
+            }
+        }
+    }
+
+    public override void AddGlobalHints(Actor actor, GlobalHints hints)
+    {
+        if (_config.P123ManaStrategy && ManaAssignmentsUnsafe)
+            hints.Add(_tetherTargets.Count(t => t != null) == 6 ? "LR assignment guidance unavailable: disable AI movement and untangle manually!" : "Waiting for LR tether data; no assignment guidance.");
+    }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
@@ -79,8 +109,24 @@ sealed class P2BrightHunger1(BossModule module) : Components.GenericTowers(modul
             if (!_forbidden[slot])
                 conga.Add((slot, group));
         conga.Sort(static (a, b) => a.prio.CompareTo(b.prio));
+        if (_config.P123ManaStrategy && conga.Count != 6)
+        {
+            Towers.Clear();
+            return;
+        }
         if (conga.Count == 6)
         {
+            if (_config.P123ManaStrategy)
+            {
+                // CW from H1: supports left-to-right, DPS right-to-left. Towers: NW, S, NE, SW, N, SE.
+                conga.Sort(static (a, b) => (a.prio < 4 ? a.prio : 11 - a.prio).CompareTo(b.prio < 4 ? b.prio : 11 - b.prio));
+                var clockwise = conga.ToArray();
+                ReadOnlySpan<int> towerOrder = [0, 4, 2, 5, 1, 3];
+                for (var i = 0; i < 6; ++i)
+                    conga[i] = clockwise[towerOrder[i]];
+            }
+            else
+            {
             var firstSouth = conga.FindIndex(kv => kv.prio >= 4);
             if (firstSouth == 2)
             {
@@ -99,6 +145,7 @@ sealed class P2BrightHunger1(BossModule module) : Components.GenericTowers(modul
             // finally, swap N & S and NW & NE to convert prepositions to tower positions
             (conga[0], conga[2]) = (conga[2], conga[0]);
             (conga[1], conga[4]) = (conga[4], conga[1]);
+            }
         }
         else
         {
@@ -142,12 +189,42 @@ sealed class P2PowerfulLight(BossModule module) : Components.UniformStackSpread(
 sealed class P2BrightHunger2(BossModule module) : Components.GenericTowers(module, (uint)AID.BrightHunger)
 {
     private BitMask _forbidden;
+    private readonly bool _mana = Service.Config.Get<FRUConfig>().P123ManaStrategy;
+    public bool ManaAssignmentsUnsafe;
+    public int ManaEligibleCount;
+
+    internal static BitMask ManaEligibleMask((int slot, Actor actor)[] party, DateTime now)
+    {
+        BitMask eligible = default;
+        foreach (var (slot, actor) in party)
+            if (!actor.IsDead && !actor.IsDestroyed && actor.FindStatus((uint)SID.Lightsteeped) is { Extra: 2 } status && status.ExpireAt > now)
+                eligible.Set(slot);
+        return eligible;
+    }
+
+    public override void Update()
+    {
+        if (!_mana)
+            return;
+        var eligible = ManaEligibleMask(Raid.WithSlot(true, true, true), WorldState.CurrentTime);
+        ManaEligibleCount = eligible.NumSetBits();
+        ManaAssignmentsUnsafe = ManaEligibleCount != 4;
+        _forbidden = ManaAssignmentsUnsafe ? new(0xFF) : eligible ^ new BitMask(0xFF);
+        for (var i = 0; i < Towers.Count; ++i)
+            Towers.Ref(i).ForbiddenSoakers = _forbidden;
+    }
+
+    public override void AddGlobalHints(Actor actor, GlobalHints hints)
+    {
+        if (_mana && Towers.Count > 0 && ManaAssignmentsUnsafe)
+            hints.Add($"Central tower guidance unavailable: need four living players with 2 Lightsteeped stacks (found {ManaEligibleCount}); resolve manually!");
+    }
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints) { } // there are dedicated components for hints
 
     public override void OnStatusGain(Actor actor, ref ActorStatus status)
     {
-        if (status.ID == (uint)SID.Lightsteeped && status.Extra >= 3)
+        if (!_mana && status.ID == (uint)SID.Lightsteeped && status.Extra >= 3)
             _forbidden[Raid.FindSlot(actor.InstanceID)] = true;
     }
 
@@ -155,7 +232,10 @@ sealed class P2BrightHunger2(BossModule module) : Components.GenericTowers(modul
     public override void OnCastFinished(Actor caster, ActorCastInfo spell)
     {
         if (Towers.Count == 0 && spell.Action.ID == (uint)AID.HolyLightBurst)
-            Towers.Add(new(Arena.Center, 4f, 1, 8, _forbidden, WorldState.FutureTime(6.5d)));
+        {
+            Update(); // sample actual current statuses, including gains before this component was activated
+            Towers.Add(new(Arena.Center, 4f, _mana ? 4 : 1, _mana ? 4 : 8, _forbidden, WorldState.FutureTime(6.5d)));
+        }
     }
 
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
@@ -178,6 +258,8 @@ sealed class P2LightRampantBanish(BossModule module) : P2Banish(module)
     {
         if (_tower?.Towers.Count > 0)
         {
+            if (_tower.ManaAssignmentsUnsafe)
+                return; // fail closed rather than forcing an incomplete or wrong-stack party into the tower
             // first deal with towers
             ref var t = ref _tower.Towers.Ref(0);
             if (t.ForbiddenSoakers[slot])
@@ -257,6 +339,7 @@ sealed class P2HouseOfLightBoss(BossModule module) : Components.GenericBaitAway(
 // movement to soak towers and bait first 3 puddles (third puddle is baited right before towers resolve)
 sealed class P2LightRampantAITowers(BossModule module) : BossComponent(module)
 {
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
     private readonly P2LuminousHammer? _puddles = module.FindComponent<P2LuminousHammer>();
     private readonly P2BrightHunger1? _towers = module.FindComponent<P2BrightHunger1>();
 
@@ -265,6 +348,8 @@ sealed class P2LightRampantAITowers(BossModule module) : BossComponent(module)
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
         if (_puddles == null || _towers == null)
+            return;
+        if (_config.P123ManaStrategy && Module.FindComponent<P2LightRampant>()?.ManaAssignmentsUnsafe == true)
             return;
 
         var bait = _puddles.ActiveBaitsOn(actor).FirstOrDefault();
@@ -288,14 +373,19 @@ sealed class P2LightRampantAITowers(BossModule module) : BossComponent(module)
                     // same side, see if we need to swap
                     var moreRight = actor.PosRot.X > partner.PosRot.X;
                     var moreCW = north == moreRight;
-                    north ^= moreCW;
+                    north ^= _config.P123ManaStrategy ? !moreCW : moreCW;
                 }
 
-                var preposSpot = Arena.Center + new WDir(default, north ? -BaitOffset : BaitOffset);
+                var preposSpot = Arena.Center + (_config.P123ManaStrategy ? BaitOffset * (north ? 135f : -45f).Degrees().ToDirection() : new WDir(default, north ? -BaitOffset : BaitOffset));
                 hints.AddForbiddenZone(new SDInvertedCircle(preposSpot, 1), bait.Activation);
             }
             else
             {
+                if (_config.P123ManaStrategy)
+                {
+                    hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + BaitOffset * _puddles.PrevBaitOffset[slot].Normalized().Rotate(-45f.Degrees()), 1f), bait.Activation);
+                    return;
+                }
                 // each next bait is just previous position rotated CW by 45 degrees
                 // note that this is only really relevant for second and third puddles - after that towers resolve and we use different component
                 //var nextSpot = Arena.Center + BaitOffset * _puddles.PrevBaitOffset[slot].Normalized().Rotate(-45.Degrees());
@@ -320,10 +410,26 @@ sealed class P2LightRampantAITowers(BossModule module) : BossComponent(module)
 // movement to stack N/S after towers (and bait last two puddles)
 sealed class P2LightRampantAIStackPrepos(BossModule module) : BossComponent(module)
 {
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
     private readonly P2LuminousHammer? _puddles = module.FindComponent<P2LuminousHammer>();
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
+        if (_config.P123ManaStrategy && Module.FindComponent<P2LightRampant>()?.ManaAssignmentsUnsafe == true)
+            return;
+        if (_config.P123ManaStrategy && _puddles != null)
+        {
+            var count = _puddles.BaitsPerPlayer[slot];
+            if (count is > 0 and < 5 && _puddles.ActiveBaitsOn(actor).FirstOrDefault() is var bait && bait.Target != null)
+            {
+                var next = Arena.Center + 8f * _puddles.PrevBaitOffset[slot].Normalized().Rotate(-45f.Degrees());
+                hints.AddForbiddenZone(new SDInvertedCircle(next, 1f), bait.Activation);
+                return;
+            }
+            var north = count > 0 ? _puddles.PrevBaitOffset[slot].Z < 0 : actor.PosRot.Z < Arena.Center.Z;
+            hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + 18f * ((north ? 180f : 0f) - 20f).Degrees().ToDirection(), 1f), DateTime.MaxValue);
+            return;
+        }
         var isPuddleBaiter = _puddles?.IsBaitTarget(actor) ?? false;
         var northCamp = isPuddleBaiter ? actor.PosRot.X < Arena.Center.X : actor.PosRot.Z < Arena.Center.Z; // this assumes CW movement for baiter
         var dest = Arena.Center + new WDir(default, northCamp ? -18f : 18f);
@@ -340,6 +446,7 @@ sealed class P2LightRampantAIStackPrepos(BossModule module) : BossComponent(modu
 // movement to resolve stacks
 sealed class P2LightRampantAIStackResolve(BossModule module) : BossComponent(module)
 {
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
     private readonly P2PowerfulLight? _stack = module.FindComponent<P2PowerfulLight>();
     private readonly P2HolyLightBurst? _orbs = module.FindComponent<P2HolyLightBurst>();
 
@@ -347,6 +454,8 @@ sealed class P2LightRampantAIStackResolve(BossModule module) : BossComponent(mod
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
+        if (_config.P123ManaStrategy && Module.FindComponent<P2LightRampant>()?.ManaAssignmentsUnsafe == true)
+            return;
         if (_stack == null || _orbs == null)
             return;
 
@@ -398,10 +507,13 @@ sealed class P2LightRampantAIStackResolve(BossModule module) : BossComponent(mod
 // movement to dodge orbs after resolving stack
 sealed class P2LightRampantAIOrbs(BossModule module) : BossComponent(module)
 {
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
     private readonly P2HolyLightBurst? _orbs = module.FindComponent<P2HolyLightBurst>();
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
+        if (_config.P123ManaStrategy && Module.FindComponent<P2LightRampant>()?.ManaAssignmentsUnsafe == true)
+            return;
         if (_orbs == null || _orbs.Casters.Count == 0)
             return;
 

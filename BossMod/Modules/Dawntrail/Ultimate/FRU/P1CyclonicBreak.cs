@@ -135,7 +135,7 @@ sealed class P1CyclonicBreakAIDodgeSpreadStack(BossModule module) : BossComponen
         var dodgeCCW = _spreadStack.Stacks.Count > 0 ? _config.P1CyclonicBreakStackSupportsCCW == isSupport : isSupport ? _config.P1CyclonicBreakSpreadSupportsCCW : _config.P1CyclonicBreakSpreadDDCCW;
         var assignedDirection = (180f - 45f * clockspot).Degrees();
         var safeAngles = _forbiddenDirections.NextAllowed(assignedDirection, dodgeCCW);
-        var (rangeMin, rangeMax) = _spreadStack.Stacks.Count > 0 ? (4, 10) : assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 ? (3, 6) : (7, 15);
+        var (rangeMin, rangeMax) = _spreadStack.Stacks.Count > 0 ? (4, 10) : assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 || assignment == PartyRolesConfig.Assignment.OT && !_config.P123ManaStrategy ? (3, 6) : (7, 15);
 
         hints.AddForbiddenZone(new SDInvertedDonutSector(_forbiddenDirections.Center, rangeMin, rangeMax, (safeAngles.min + safeAngles.max) * 0.5f, (safeAngles.max - safeAngles.min) * 0.5f), _spreadStack.Activation);
 

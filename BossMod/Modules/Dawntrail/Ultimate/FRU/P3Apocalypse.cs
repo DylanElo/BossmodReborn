@@ -301,7 +301,7 @@ sealed class P3ApocalypseDarkWater(BossModule module) : Components.UniformStackS
 
             // Same calculation used by P3ApocalypseAIWater2.
             var midDir = safe;
-            var midIsForG2 = midDir.Deg is >= -20 and < 160;
+            var midIsForG2 = _config.P3ApocalypseManaDarkWater1 ? _apoc.Starting.Value.Normalized().Deg is >= -67.5f and < 112.5f : midDir.Deg is >= -20 and < 160;
             if (!midIsForG2)
                 midDir += 180f.Degrees();
 
@@ -318,20 +318,20 @@ sealed class P3ApocalypseDarkWater(BossModule module) : Components.UniformStackS
             hints.Add(text);
     }
 
-    private static string DirectionPair(Angle dir)
+    private string DirectionPair(Angle dir)
     {
         var deg = dir.Normalized().Deg;
 
         return deg switch
         {
             >= -22.5f and < 22.5f => "N/S [A/C]",
-            >= 22.5f and < 67.5f => "NW/SE [1/3]",
+            >= 22.5f and < 67.5f => _config.P123ManaStrategy ? "NW/SE [4/2]" : "NW/SE [1/3]",
             >= 67.5f and < 112.5f => "E/W [B/D]",
-            >= 112.5f and < 157.5f => "NE/SW [2/4]",
+            >= 112.5f and < 157.5f => _config.P123ManaStrategy ? "NE/SW [1/3]" : "NE/SW [2/4]",
             >= 157.5f or < -157.5f => "N/S [A/C]",
-            >= -157.5f and < -112.5f => "NW/SE [1/3]",
+            >= -157.5f and < -112.5f => _config.P123ManaStrategy ? "NW/SE [4/2]" : "NW/SE [1/3]",
             >= -112.5f and < -67.5f => "E/W [B/D]",
-            >= -67.5f and < -22.5f => "NE/SW [2/4]",
+            >= -67.5f and < -22.5f => _config.P123ManaStrategy ? "NE/SW [1/3]" : "NE/SW [2/4]",
             _ => "N/S [A/C]"
         };
     }
@@ -422,6 +422,18 @@ sealed class P3ApocalypseDarkWater(BossModule module) : Components.UniformStackS
             Utils.Swap(ref state.AssignedGroup, ref partnerState.AssignedGroup);
             Utils.Swap(ref state.AssignedPosition, ref partnerState.AssignedPosition);
             _swaps += $"{(_swaps.Length > 0 ? ", " : "")}{Raid[slot]?.Name} <-> {Raid[partnerSlot]?.Name}";
+        }
+        if (_config.P123ManaStrategy && _config.P3ApocalypseAssignments.Assignments is [0, 1, 2, 3, 4, 5, 6, 7])
+        {
+            // Mana sorts the final groups in Z order, rather than inheriting the traded player's spot.
+            ReadOnlySpan<int> priority = [4, 5, 0, 1, 6, 2, 7, 3];
+            var group1Position = 0;
+            var group2Position = 0;
+            foreach (var role in priority)
+            {
+                ref var state = ref States[slotPerAssignment[role]];
+                state.AssignedPosition = state.AssignedGroup == 1 ? group1Position++ : group2Position++;
+            }
         }
         //ReportError($"FOO: {debugSwap:X2} == {_swaps}");
         _swaps = $"Swaps: {(_swaps.Length > 0 ? _swaps : "none")}";
@@ -533,8 +545,8 @@ sealed class P3ApocalypseDarkEruption(BossModule module) : Components.SpreadFrom
         if (group == 0)
             return default; // no assignments - oh well, at least we know reference directions
 
-        // G1 takes dir CCW from N, G2 takes 0/45/90/135
-        var midIsForG2 = midDir.Deg is >= -20 and < 160;
+        // Mana assigns G2 from the initial E/SE/S/SW light, before rotating to the safe spot.
+        var midIsForG2 = _config.P3ApocalypseManaDarkWater1 ? _apoc.Starting.Value.Normalized().Deg is >= -67.5f and < 112.5f : midDir.Deg is >= -20 and < 160;
         if (midIsForG2 != (group == 2))
         {
             midDir += 180f.Degrees();
@@ -634,7 +646,7 @@ sealed class P3ApocalypseAIWater1(BossModule module) : BossComponent(module)
             3 => (10f.Degrees(), 8f),
             _ => (default, default)
         };
-        dir += _config.P3ApocalypseDarkWater1ReferenceDirection.Degrees();
+        dir += (_config.P3ApocalypseManaDarkWater1 ? -157.5f : _config.P3ApocalypseDarkWater1ReferenceDirection).Degrees();
         if (state.AssignedGroup == 2)
             dir += 180f.Degrees();
         hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + range * dir.ToDirection(), 1f), _water.Stacks.Count > 0 ? _water.Stacks.Ref(0).Activation : DateTime.MaxValue);
@@ -702,13 +714,13 @@ sealed class P3ApocalypseAIWater2(BossModule module) : BossComponent(module)
 
         var midDir = (_apoc.Starting.Value - _apoc.Rotation).Normalized();
 
-        // G1 takes dir CCW from N, G2 takes 0/45/90/135
-        var midIsForG2 = midDir.Deg is >= -20 and < 160;
+        // Mana assigns G2 from the initial E/SE/S/SW light, before rotating to the safe spot.
+        var midIsForG2 = _config.P3ApocalypseManaDarkWater1 ? _apoc.Starting.Value.Normalized().Deg is >= -67.5f and < 112.5f : midDir.Deg is >= -20 and < 160;
         if (midIsForG2 != (state.AssignedGroup == 2))
             midDir += 180.Degrees();
 
         var distance = 4.5f;
-        if (_apoc.NumCasts >= 28 && assignment == (_config.P3DarkestDanceOTBait ? PartyRolesConfig.Assignment.OT : PartyRolesConfig.Assignment.MT))
+        if (_apoc.NumCasts >= 28 && assignment != PartyRolesConfig.Assignment.Unassigned && assignment == DarkestDanceBaiter())
         {
             // bait darkest dance (but make sure to share water first!)
             distance = _water.Stacks.Count == 0 ? 19 : 8;
@@ -729,10 +741,22 @@ sealed class P3ApocalypseAIWater2(BossModule module) : BossComponent(module)
         Arena.ZoneCircleOutline(Arena.Center + destOff, 1f, Colors.Safe);
         Arena.ZoneCircleOutline(Arena.Center - destOff, 1f, Colors.Safe);
     }
+
+    private PartyRolesConfig.Assignment DarkestDanceBaiter()
+    {
+        if (!_config.P123ManaStrategy)
+            return _config.P3DarkestDanceOTBait ? PartyRolesConfig.Assignment.OT : PartyRolesConfig.Assignment.MT;
+
+        var slots = Service.Config.Get<PartyRolesConfig>().SlotsPerAssignment(Raid);
+        if (slots.Length == 0 || Raid[slots[(int)PartyRolesConfig.Assignment.MT]] is not { Role: Role.Tank } mt || Raid[slots[(int)PartyRolesConfig.Assignment.OT]] is not { Role: Role.Tank })
+            return PartyRolesConfig.Assignment.Unassigned;
+        return mt.Class == Class.PLD ? PartyRolesConfig.Assignment.MT : PartyRolesConfig.Assignment.OT;
+    }
 }
 // position for darkest dance knockback & third dark water
 sealed class P3ApocalypseAIWater3(BossModule module) : BossComponent(module)
 {
+    private readonly FRUConfig _config = Service.Config.Get<FRUConfig>();
     private readonly P3ApocalypseDarkWater? _water = module.FindComponent<P3ApocalypseDarkWater>();
     private readonly P3DarkestDanceKnockback? _knockback = module.FindComponent<P3DarkestDanceKnockback>();
 
@@ -745,7 +769,8 @@ sealed class P3ApocalypseAIWater3(BossModule module) : BossComponent(module)
         if (toCenter.LengthSq() < 1f)
             return; // did not jump yet, wait...
 
-        var angle = 20f.Degrees(); //(_knockback.NumCasts == 0 ? 30 : 45).Degrees();
+        // Keep the shallow knockback angle; separate final stacks beyond Water's radius plus both positioning tolerances.
+        var angle = (_config.P123ManaStrategy && _knockback.NumCasts > 0 ? 25f : 20f).Degrees();
         var dir = Angle.FromDirection(toCenter) + _water.States[slot].AssignedGroup switch
         {
             1 => -angle,

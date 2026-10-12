@@ -349,6 +349,7 @@ public enum TetherID : uint
     HiemalRay = 84, // CrystalOfLight->player
     UltimateRelativitySlow = 133, // DelightsHourglass->BossP3
     UltimateRelativityQuicken = 134, // DelightsHourglass->BossP3
-    MornAfahHPCheck = 1, // UsurperOfFrostP4->OracleOfDarknessP4
-    MornAfahHPFail = 2, // UsurperOfFrostP4->OracleOfDarknessP4
+    // Morn Afah HP-check tethers show which boss is >5% higher (not pass/fail); can linger after the gap is fixed.
+    MornAfahOracleHigher = 1, // UsurperOfFrostP4->OracleOfDarknessP4, purple: Oracle has too much HP
+    MornAfahUsurperHigher = 2, // UsurperOfFrostP4->OracleOfDarknessP4, white: Usurper has too much HP
 }

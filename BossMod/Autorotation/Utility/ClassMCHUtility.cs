@@ -2,8 +2,9 @@
 
 public sealed class ClassMCHUtility(RotationModuleManager manager, Actor player) : RoleRangedUtility(manager, player)
 {
-    public enum Track { Tactician = SharedTrack.Count, Dismantle }
+    public enum Track { Tactician = SharedTrack.Count, Dismantle, Burst }
     public enum TactOption { None, Use87, Use87IfNotActive, Use88, Use88IfNotActive }
+    public enum BurstOption { None, Window, WindowWithPotion }
 
     public static readonly ActionID IDLimitBreak3 = ActionID.MakeSpell(MCH.AID.SatelliteBeam);
 
@@ -22,13 +23,21 @@ public sealed class ClassMCHUtility(RotationModuleManager manager, Actor player)
 
         DefineSimpleConfig(res, Track.Dismantle, "Dismantle", "Dism", 500, MCH.AID.Dismantle, 10);
 
+        // Marker only: read by Rotation Solver's "MCH Plan" rotation, never executed here.
+        res.Define(Track.Burst).As<BurstOption>("Burst", "Burst", 300)
+            .AddOption(BurstOption.None, "No burst window")
+            .AddOption(BurstOption.Window, "Two-minute burst window (Rotation Solver MCH Plan)", 0, 20)
+            .AddOption(BurstOption.WindowWithPotion, "Two-minute burst window with potion (Rotation Solver MCH Plan)", 0, 20);
+
         return res;
     }
 
     public override void Execute(StrategyValues strategy, Actor? primaryTarget, float estimatedAnimLockDelay, bool isMoving)
     {
         ExecuteShared(strategy, IDLimitBreak3, primaryTarget);
-        ExecuteSimple(strategy.Option(Track.Dismantle), MCH.AID.Dismantle, ResolveTarget(strategy.Option(Track.Dismantle).Value) ?? primaryTarget);
+        var dismantle = strategy.Option(Track.Dismantle);
+        if (dismantle.As<SimpleOption>() == SimpleOption.Use)
+            PushPlannedUtility(dismantle, MCH.AID.Dismantle, ResolveTarget(dismantle.Value) ?? primaryTarget);
 
         // TODO: for 'if-not-active' strategy, add configurable min-time-left
         // TODO: combine 87/88 options
@@ -40,6 +49,13 @@ public sealed class ClassMCHUtility(RotationModuleManager manager, Actor player)
             _ => false
         };
         if (wantTact)
-            Hints.ActionsToExecute.Push(ActionID.MakeSpell(MCH.AID.Tactician), Player, tact.Priority(), tact.Value.ExpireIn);
+            PushPlannedUtility(tact, MCH.AID.Tactician, Player);
+    }
+
+    private void PushPlannedUtility(in StrategyValues.OptionRef option, MCH.AID action, Actor? target)
+    {
+        // Only native plan entries have a finite window; presets and defaults retain normal execution.
+        var planned = Manager.Preset == null && Manager.Planner?.Plan != null && float.IsFinite(option.Value.ExpireIn) && option.Value.ExpireIn < float.MaxValue;
+        Hints.ActionsToExecute.Push(ActionID.MakeSpell(action), target, option.Priority(), option.Value.ExpireIn, plannedMchUtility: planned);
     }
 }

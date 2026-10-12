@@ -25,7 +25,11 @@ sealed class P4DarklitDragonsong(BossModule module) : BossComponent(module)
     public override void OnStatusGain(Actor actor, ref ActorStatus status)
     {
         if (status.ID == (uint)SID.SpellInWaitingDarkWater)
+        {
             Stacks[Raid.FindSlot(actor.InstanceID)] = true;
+            if (Service.Config.Get<FRUConfig>().P4ManaStrategy)
+                InitAssignments();
+        }
     }
 
     public override void OnTethered(Actor source, in ActorTetherInfo tether)
@@ -36,13 +40,18 @@ sealed class P4DarklitDragonsong(BossModule module) : BossComponent(module)
             var target = WorldState.Actors.Find(tether.Target);
             if (target != null)
                 _tethers.Add((source, target));
-            if (_tethers.Count == 4)
+            if (_tethers.Count == 4 || Service.Config.Get<FRUConfig>().P4ManaStrategy)
                 InitAssignments();
         }
     }
 
     private void InitAssignments()
     {
+        if (Service.Config.Get<FRUConfig>().P4ManaStrategy)
+        {
+            InitManaAssignments();
+            return;
+        }
         Span<int> ccwOrderSlots = [-1, -1, -1, -1, -1, -1, -1, -1];
         int[] playerPrios = [-1, -1, -1, -1, -1, -1, -1, -1];
         foreach (var (slot, group) in Service.Config.Get<FRUConfig>().P4DarklitDragonsongAssignments.Resolve(Raid))
@@ -88,9 +97,65 @@ sealed class P4DarklitDragonsong(BossModule module) : BossComponent(module)
             var flexE = AssignE[flexStack.LowestSetBit()];
             var flexMask = (AssignE ^ new BitMask(flexE ? 0u : 0xFF)) & ~TowerSoakers; // mask containing both flexers
             if (flexStack.NumSetBits() != 1 || flexMask.NumSetBits() != 2 || (flexStack & flexMask) != flexStack)
+            {
                 ReportError("Some error with swap logic, investigate");
+                return;
+            }
             AssignS ^= flexMask;
         }
+    }
+
+    private void InitManaAssignments()
+    {
+        AssignS = AssignE = default;
+        var slots = Service.Config.Get<PartyRolesConfig>().SlotsPerAssignment(Raid);
+        if (slots.Length != 8 || _tethers.Count != 4 || TowerSoakers.NumSetBits() != 4 || Stacks.NumSetBits() != 2 || (Stacks & TowerSoakers).NumSetBits() != 1)
+            return;
+        var tankSlots = slots.Take(2).Where(i => TowerSoakers[i]).ToArray();
+        var healerSlots = slots.Skip(2).Take(2).Where(i => TowerSoakers[i]).ToArray();
+        var dpsSlots = slots.Skip(4).Where(i => TowerSoakers[i]).ToArray();
+        if (tankSlots.Length != 1 || healerSlots.Length != 1 || dpsSlots.Length != 2)
+            return;
+        // Validate the complete directed ring before publishing any assignment.
+        var from = _tethers.Select(t => Raid.FindSlot(t.from.InstanceID)).ToArray();
+        var to = _tethers.Select(t => Raid.FindSlot(t.to.InstanceID)).ToArray();
+        if (from.Any(i => i < 0) || to.Any(i => i < 0) || from.Distinct().Count() != 4 || to.Distinct().Count() != 4 || !from.Order().SequenceEqual(to.Order()))
+            return;
+        var healer = healerSlots[0];
+        var next = healer;
+        var visited = new HashSet<int>();
+        for (var i = 0; i < 4; ++i)
+        {
+            if (!visited.Add(next))
+                return;
+            next = to[Array.IndexOf(from, next)];
+        }
+        if (next != healer)
+            return;
+        var south = BitMask.Build(to[Array.IndexOf(from, healer)], from[Array.IndexOf(to, healer)]);
+        var east = new BitMask();
+        var opposite = (TowerSoakers & ~south).SetBits().Single(i => i != healer);
+        east.Set(opposite); // healer NW; opposite tether NE
+        // Box/hourglass: tank swaps with the opposite DPS's original horizontal spot.
+        east.Set(opposite == tankSlots[0] || opposite == dpsSlots[0] ? dpsSlots[1] : tankSlots[0]);
+        var baitHealer = slots.Skip(2).Take(2).Single(i => !TowerSoakers[i]);
+        var baitTank = slots.Take(2).Single(i => !TowerSoakers[i]);
+        var baitDps = slots.Skip(4).Where(i => !TowerSoakers[i]).ToArray();
+        south.Set(baitDps[0]);
+        south.Set(baitDps[1]);
+        east.Set(baitTank); // H NW, T NE; remaining DPS SW/SE in horizontal priority
+        east.Set(baitDps[1]);
+        if ((south & Stacks).NumSetBits() != 1)
+        {
+            var water = (Stacks & ~TowerSoakers).LowestSetBit();
+            var partner = new[] { baitHealer, baitTank, baitDps[0], baitDps[1] }.Where(i => east[i] == east[water]).ToArray();
+            if (partner.Length != 2)
+                return;
+            foreach (var slot in partner)
+                south.Toggle(slot);
+        }
+        AssignS = south;
+        AssignE = east;
     }
 
     private int SelectEastTowerSoaker(BitMask soakers, ReadOnlySpan<int> prios)
@@ -114,6 +179,14 @@ sealed class P4DarklitDragonsongBrightHunger(BossModule module) : Components.Gen
 
     private const float TowerOffset = 8f;
 
+    public override void Update()
+    {
+        // Water can arrive after the fourth tether, when these towers were created.
+        if (Service.Config.Get<FRUConfig>().P4ManaStrategy && _darklit != null)
+            foreach (ref var tower in CollectionsMarshal.AsSpan(Towers))
+                tower.ForbiddenSoakers = _darklit.AssignS.None() ? new(0xFF) : new BitMask(0xFF) ^ (_darklit.TowerSoakers & (tower.Position.Z > Arena.Center.Z ? _darklit.AssignS : ~_darklit.AssignS));
+    }
+
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
         if (_darklit == null || Towers.Count == 0 || _darklit.AssignS.None() || !_darklit.TowerSoakers[slot])
@@ -133,7 +206,7 @@ sealed class P4DarklitDragonsongBrightHunger(BossModule module) : Components.Gen
             var allowedN = _darklit.TowerSoakers & ~_darklit.AssignS;
             var allowedS = _darklit.TowerSoakers & _darklit.AssignS;
             if (_darklit.AssignS.None())
-                allowedN = allowedS = _darklit.TowerSoakers; // no assignments, just mark both towers as good
+                allowedN = allowedS = Service.Config.Get<FRUConfig>().P4ManaStrategy ? default : _darklit.TowerSoakers;
 
             var towerOffset = new WDir(default, TowerOffset);
             var act = WorldState.FutureTime(10.4d);
@@ -257,6 +330,13 @@ sealed class P4DarklitDragonsongDarkWater(BossModule module) : Components.Unifor
     public void Show()
     {
         _resolveImminent = true;
+        Update();
+    }
+
+    public override void Update()
+    {
+        if (!_resolveImminent)
+            return;
         if (_assignments != null && _assignments.AssignS.Any())
         {
             foreach (ref var s in Stacks.AsSpan())
@@ -265,6 +345,9 @@ sealed class P4DarklitDragonsongDarkWater(BossModule module) : Components.Unifor
                 s.ForbiddenPlayers = _assignments.AssignS ^ new BitMask(isSouth ? 0xFF : 0u);
             }
         }
+        else if (Service.Config.Get<FRUConfig>().P4ManaStrategy)
+            foreach (ref var s in CollectionsMarshal.AsSpan(Stacks))
+                s.ForbiddenPlayers = new(0xFF);
     }
 
     public override void AddHints(int slot, Actor actor, TextHints hints)
@@ -297,7 +380,7 @@ sealed class P4DarklitDragonsongDarkWater(BossModule module) : Components.Unifor
                     // otherwise just stack tightly with our target, and avoid other
                     for (var j = 0; j < len; ++j)
                     {
-                        ref var st = ref stacks[i];
+                        ref var st = ref stacks[j];
                         hints.AddForbiddenZone(st.ForbiddenPlayers[slot] ? new SDCircle(st.Target.Position, st.Radius) : new SDInvertedCircle(st.Target.Position, 2f), st.Activation);
                     }
                 }
@@ -326,6 +409,13 @@ sealed class P4SomberDance(BossModule module) : Components.GenericBaitAway(modul
 
     private static readonly AOEShapeCircle _shape = new(8);
 
+    public override void AddHints(int slot, Actor actor, TextHints hints)
+    {
+        base.AddHints(slot, actor, hints);
+        if (_config.P4ManaStrategy && Service.Config.Get<PartyRolesConfig>().SlotsPerAssignment(Raid).Length == 0)
+            hints.Add("Assign all party roles for Mana Somber Dance!");
+    }
+
     public override void Update()
     {
         CurrentBaits.Clear();
@@ -339,16 +429,52 @@ sealed class P4SomberDance(BossModule module) : Components.GenericBaitAway(modul
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
-        if (assignment == (_config.P4SomberDanceOTBait ? PartyRolesConfig.Assignment.OT : PartyRolesConfig.Assignment.MT))
+        var baiter = _config.P4SomberDanceOTBait ? PartyRolesConfig.Assignment.OT : PartyRolesConfig.Assignment.MT;
+        if (_config.P4ManaStrategy)
+        {
+            var mtSlot = Service.Config.Get<PartyRolesConfig>().SlotsPerAssignment(Raid);
+            if (mtSlot.Length == 0)
+                return;
+            baiter = Raid[mtSlot[(int)PartyRolesConfig.Assignment.MT]]?.Class == Class.PLD ? PartyRolesConfig.Assignment.OT : PartyRolesConfig.Assignment.MT;
+        }
+        if (assignment == baiter)
         {
             // go far east/west
-            var pos = Arena.Center + new WDir(actor.PosRot.X > Arena.Center.X ? 19f : -19f, default);
-            hints.AddForbiddenZone(new SDInvertedCircle(pos, 1f), _activation);
+            var pos = _config.P4ManaStrategy && NumCasts > 0 && _source != null
+                ? _source.Position
+                : _config.P4ManaStrategy && _source != null ? FirstBaitPosition() : Arena.Center + new WDir(actor.PosRot.X > Arena.Center.X ? 19f : -19f, default);
+            if (pos is { } destination)
+                hints.AddForbiddenZone(new SDInvertedCircle(destination, 1f), _activation);
         }
         else
         {
             base.AddAIHints(slot, actor, assignment, hints);
+            if (_config.P4ManaStrategy && NumCasts == 0 && _source != null && FirstBaitPosition() is { } baitPosition)
+                hints.AddForbiddenZone(new SDInvertedCircle(_source.Position, MathF.Max(0f, MathF.Sqrt((baitPosition - _source.Position).LengthSq()) - 2f)), _activation);
+            if (_config.P4ManaStrategy && NumCasts > 0 && _source != null)
+                hints.AddForbiddenZone(new SDCircle(_source.Position, 9f), _activation);
         }
+    }
+
+    private WPos? FirstBaitPosition()
+    {
+        var fragments = Module.Enemies((uint)OID.FragmentOfFate);
+        WPos? best = null;
+        var bestDistance = -1f;
+        // Choose the farther E/W edge, keeping the buster away from the north Fragment.
+        foreach (var side in new[] { -1f, 1f })
+        {
+            var pos = Arena.Center + new WDir(19f * side, 0f);
+            if (fragments.Any(f => !f.IsDeadOrDestroyed && (pos - f.Position).LengthSq() <= (10f + f.HitboxRadius) * (10f + f.HitboxRadius)))
+                continue; // 8-yalm buster + hitbox + destination tolerance + movement margin
+            var distance = (pos - (_source?.Position ?? Arena.Center)).LengthSq();
+            if (distance > bestDistance)
+            {
+                best = pos;
+                bestDistance = distance;
+            }
+        }
+        return best;
     }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
@@ -367,8 +493,9 @@ sealed class P4SomberDance(BossModule module) : Components.GenericBaitAway(modul
         {
             ++NumCasts;
             _activation = WorldState.FutureTime(3.2d);
-            foreach (var t in spell.Targets)
-                ForbiddenPlayers.Set(Raid.FindSlot(t.ID));
+            if (!_config.P4ManaStrategy)
+                foreach (var t in spell.Targets)
+                    ForbiddenPlayers.Set(Raid.FindSlot(t.ID));
         }
     }
 }
