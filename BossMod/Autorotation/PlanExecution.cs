@@ -140,8 +140,8 @@ public sealed class PlanExecution
                 var rangedMitigation = config.AssociatedActions.Count == 1
                     && (module.Type == typeof(ClassMCHUtility) && config.InternalName == "Tactician"
                         || module.Type == typeof(ClassBRDUtility) && config.InternalName == "Troubadour");
-                // Burst windows are timing markers for Rotation Solver's MCH Plan: reported with no action so nothing auto-casts them.
-                var marker = module.Type == typeof(ClassMCHUtility) && config.InternalName == "Burst";
+                // Burst windows are timing markers for Rotation Solver's MCH/BRD Plan: reported with no action so nothing auto-casts them.
+                var marker = (module.Type == typeof(ClassMCHUtility) || module.Type == typeof(ClassBRDUtility)) && config.InternalName == "Burst";
                 if (!rangedMitigation && !marker && config.AssociatedActions.Count != config.Options.Count - 1)
                     continue;
 

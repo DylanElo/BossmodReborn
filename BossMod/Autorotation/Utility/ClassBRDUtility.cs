@@ -2,8 +2,9 @@
 
 public sealed class ClassBRDUtility(RotationModuleManager manager, Actor player) : RoleRangedUtility(manager, player)
 {
-    public enum Track { WardensPaean = SharedTrack.Count, Troubadour, NaturesMinne }
+    public enum Track { WardensPaean = SharedTrack.Count, Troubadour, NaturesMinne, Burst }
     public enum TroubOption { None, Use87, Use87IfNotActive, Use88, Use88IfNotActive }
+    public enum BurstOption { None, Window, WindowWithPotion }
 
     public static readonly ActionID IDLimitBreak3 = ActionID.MakeSpell(BRD.AID.SagittariusArrow);
 
@@ -23,6 +24,12 @@ public sealed class ClassBRDUtility(RotationModuleManager manager, Actor player)
             .AddAssociatedActions(BRD.AID.Troubadour);
 
         DefineSimpleConfig(res, Track.NaturesMinne, "NaturesMinne", "Minne", 400, BRD.AID.NaturesMinne, 15);
+
+        // Marker only: read by Rotation Solver's "BRD Plan" rotation, never executed here.
+        res.Define(Track.Burst).As<BurstOption>("Burst", "Burst", 300)
+            .AddOption(BurstOption.None, "No burst window")
+            .AddOption(BurstOption.Window, "Two-minute burst window (Rotation Solver BRD Plan)", 0, 20)
+            .AddOption(BurstOption.WindowWithPotion, "Two-minute burst window with potion (Rotation Solver BRD Plan)", 0, 20);
 
         return res;
     }
