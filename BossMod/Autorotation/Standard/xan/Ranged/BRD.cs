@@ -227,7 +227,7 @@ public sealed class BRD(RotationModuleManager manager, Actor player) : Attackxan
         if (ReadyIn(AID.RagingStrikes) > 55)
             return ReadyIn(AID.RagingStrikes) < 60 || Soul == 100;
 
-        // use in 2min
-        return RagingStrikes > GCD;
+        // use in 2min; never sit on capped gauge while waiting (every proc past 100 is lost)
+        return RagingStrikes > GCD || Soul == 100 && ReadyIn(AID.RagingStrikes) > GCD * 2;
     }
 }

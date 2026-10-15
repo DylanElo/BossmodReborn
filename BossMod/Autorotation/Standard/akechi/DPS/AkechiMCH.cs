@@ -352,7 +352,7 @@ public sealed class AkechiMCH(RotationModuleManager manager, Actor player) : Ake
             BatteryStrategy.Automatic => CanSummon && (start || rest),
             BatteryStrategy.Fifty => CanSummon,
             BatteryStrategy.Hundred => CanSummon && risk,
-            BatteryStrategy.RaidBuffs => CanSummon && (RaidBuffsLeft > GCD || RaidBuffsIn < 5000),
+            BatteryStrategy.RaidBuffs => CanSummon && (RaidBuffsLeft > GCD || RaidBuffsIn < 5f),
             BatteryStrategy.End => MinionActive,
             BatteryStrategy.Delay or _ => false
         };
@@ -421,7 +421,7 @@ public sealed class AkechiMCH(RotationModuleManager manager, Actor player) : Ake
     private bool ShouldUsePotion(StrategyValues strategy) => strategy.Potion() switch
     {
         PotionStrategy.AlignWithBuffs => Player.InCombat && BScd <= 6f,
-        PotionStrategy.AlignWithRaidBuffs => Player.InCombat && (RaidBuffsIn <= 5000 || RaidBuffsLeft > 0),
+        PotionStrategy.AlignWithRaidBuffs => Player.InCombat && (RaidBuffsIn <= 5f || RaidBuffsLeft > 0),
         PotionStrategy.Immediate => true,
         _ => false
     };
