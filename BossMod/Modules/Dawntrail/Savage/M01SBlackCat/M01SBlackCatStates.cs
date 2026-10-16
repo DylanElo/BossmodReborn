@@ -5,7 +5,8 @@ sealed class M01SBlackCatStates : StateMachineBuilder
     public M01SBlackCatStates(BossModule module) : base(module)
     {
         DeathPhase(default, SinglePhase)
-            .ActivateOnEnter<ArenaChanges>();
+            .ActivateOnEnter<ArenaChanges>()
+            .ActivateOnEnter<Game8Strategy>();
     }
 
     private void SinglePhase(uint id)

@@ -8,6 +8,7 @@ sealed class M04SWickedThunderStates : StateMachineBuilder
     {
         _module = module;
         SimplePhase(default, SinglePhase, "Single phase")
+            .ActivateOnEnter<Game8Strategy>()
             .Raw.Update = () => Module.PrimaryActor.IsDeadOrDestroyed && (_module.BossP2()?.IsDeadOrDestroyed ?? true);
     }
 

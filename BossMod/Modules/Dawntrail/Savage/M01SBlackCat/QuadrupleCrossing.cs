@@ -4,6 +4,7 @@
 sealed class QuadrupleCrossingProtean(BossModule module) : Components.GenericBaitAway(module)
 {
     public WPos? Origin;
+    public Angle Facing; // facing of whoever fires the proteans (boss or clone), for strat-relative bait spots
     private DateTime _activation;
     private Actor? _clone;
     private Angle _jumpDirection;
@@ -70,11 +71,13 @@ sealed class QuadrupleCrossingProtean(BossModule module) : Components.GenericBai
         {
             case (uint)AID.QuadrupleCrossingFirst:
                 Origin = spell.LocXZ;
+                Facing = spell.Rotation;
                 _activation = Module.CastFinishAt(spell, 0.8d);
                 break;
             case (uint)AID.LeapingQuadrupleCrossingBossL:
             case (uint)AID.LeapingQuadrupleCrossingBossR:
-                // origin will be set to leap target when it's created
+                // origin will be set to leap target when it's created; the boss keeps its facing through the leap
+                Facing = spell.Rotation;
                 _activation = Module.CastFinishAt(spell, 1.8d);
                 break;
             case (uint)AID.NailchipperAOE:
@@ -123,6 +126,7 @@ sealed class QuadrupleCrossingProtean(BossModule module) : Components.GenericBai
         {
             var origin = source.Position + 10f * (source.Rotation + _jumpDirection).ToDirection();
             Origin = new(origin.X, origin.Z);
+            Facing = source.Rotation;
             _activation = WorldState.FutureTime(17d);
         }
     }

@@ -4,7 +4,8 @@ sealed class M03SBruteBomberStates : StateMachineBuilder
 {
     public M03SBruteBomberStates(BossModule module) : base(module)
     {
-        DeathPhase(default, SinglePhase);
+        DeathPhase(default, SinglePhase)
+            .ActivateOnEnter<Game8Strategy>();
     }
 
     private void SinglePhase(uint id)

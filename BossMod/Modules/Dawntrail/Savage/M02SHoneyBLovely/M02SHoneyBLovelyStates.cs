@@ -4,7 +4,8 @@ sealed class M02SHoneyBLovelyStates : StateMachineBuilder
 {
     public M02SHoneyBLovelyStates(BossModule module) : base(module)
     {
-        DeathPhase(0, SinglePhase);
+        DeathPhase(0, SinglePhase)
+            .ActivateOnEnter<Game8Strategy>();
     }
 
     private void SinglePhase(uint id)
