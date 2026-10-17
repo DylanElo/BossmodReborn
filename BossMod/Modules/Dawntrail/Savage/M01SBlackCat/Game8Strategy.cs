@@ -96,8 +96,8 @@ sealed class Game8Strategy(BossModule module) : BossComponent(module)
             var cardinal = a switch
             {
                 PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.R1 => 0f,
-                PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.M1 => 90f,
-                PartyRolesConfig.Assignment.H2 or PartyRolesConfig.Assignment.R2 => -90f,
+                PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.M1 => -90f,
+                PartyRolesConfig.Assignment.H2 or PartyRolesConfig.Assignment.R2 => 90f,
                 _ => 180f
             };
             var baits = support == (_supportsBaitFirst == qc.NumCasts % 8 < 4);

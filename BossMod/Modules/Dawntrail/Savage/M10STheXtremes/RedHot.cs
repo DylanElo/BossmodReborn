@@ -143,14 +143,12 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
                 if (deepvarial == null)
                     return;
 
-                var cleaves = deepvarial.ActiveCasters;
-                if (cleaves.Length == 0)
+                var origin = deepvarial.ActiveCasters.Length > 0 ? (WPos?)deepvarial.ActiveCasters[0].Origin : deepvarial.PredictedAOE?.Origin;
+                var rotation = deepvarial.ActiveCasters.Length > 0 ? (Angle?)deepvarial.ActiveCasters[0].Rotation : deepvarial.PredictedAOE?.Rotation;
+                if (origin == null || rotation == null)
                     return;
 
-                var origin = cleaves[0].Origin;
-                var rotation = cleaves[0].Rotation;
-
-                DrawPlayerPosition(pcSlot, pc, origin, rotation);
+                DrawPlayerPosition(pcSlot, pc, origin.Value, rotation.Value);
             }
             else
             {
@@ -174,9 +172,8 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
         if (CurrentState != State.DeepVarial && !Spreads.Any(s => s.Target == actor))
             return;
         var deepVarial = Module.FindComponent<DeepVarial>();
-        var cleaves = deepVarial != null ? deepVarial.ActiveCasters : [];
-        var origin = cleaves.Length > 0 ? (WPos?)cleaves[0].Origin : null;
-        var rotation = cleaves.Length > 0 ? (Angle?)cleaves[0].Rotation : null;
+        var origin = deepVarial != null && deepVarial.ActiveCasters.Length > 0 ? (WPos?)deepVarial.ActiveCasters[0].Origin : deepVarial?.PredictedAOE?.Origin;
+        var rotation = deepVarial != null && deepVarial.ActiveCasters.Length > 0 ? (Angle?)deepVarial.ActiveCasters[0].Rotation : deepVarial?.PredictedAOE?.Rotation;
         if (PlayerPosition(slot, origin, rotation) is { } destination)
         {
             hints.GoalZones.Add(AIHints.GoalProximity(destination.position, destination.radius, 10f));
@@ -252,22 +249,25 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
             // Hector -> T M H R from boss, R on other wall
             // JP -> T M H R from boss, all on same wall as deep varial, much tighter
 
+            var inward = varialRotation.Value.ToDirection();
+            var alongWall = inward.OrthoL();
+
             if (_config.HintOption == Strategy.Hector)
             {
                 // more leeway than JP, say 6.5f inbetween
-                var targetPos = varialOrigin + varialRotation.Value.ToDirection() + new WDir(5f + (role < 3 ? role : 2) * 6.5f, 0f);
+                var targetPos = varialOrigin.Value + inward + alongWall * (5f + (role < 3 ? role : 2) * 6.5f);
                 if (role == 3)
                 {
-                    targetPos += varialRotation.Value.ToDirection() * 7f;
+                    targetPos += inward * 7f;
                 }
-                return (targetPos.Value, radius);
+                return (targetPos, radius);
             }
             else
             {
                 // T M H R -> AOE 5f radius, assume 1f from edge, say 5.5f inbetween -> 102.5f, 108f, 113.5f, 119f
                 // leeway to move after deep varial resolves
-                var targetPos = varialOrigin + varialRotation.Value.ToDirection() + new WDir(2.5f + role * 5.5f, 0f);
-                return (targetPos.Value, radius);
+                var targetPos = varialOrigin.Value + inward + alongWall * (2.5f + role * 5.5f);
+                return (targetPos, radius);
             }
         }
         else

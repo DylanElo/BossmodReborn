@@ -444,6 +444,7 @@ sealed class DeepVarial(BossModule module) : Components.SimpleAOEs(module, (uint
 {
     private readonly M10STheXtremesConfig _config = Service.Config.Get<M10STheXtremesConfig>();
     AOEInstance _aoe;
+    public AOEInstance? PredictedAOE => _aoe.Shape != null ? _aoe : null;
 
     public override void OnActorPlayActionTimelineEvent(Actor actor, ushort id)
     {
@@ -470,10 +471,20 @@ sealed class DeepVarial(BossModule module) : Components.SimpleAOEs(module, (uint
     {
         if (spell.Action.ID == WatchedAction)
         {
-            if (!_config.ShowDeepVarialEarly && ActiveCasters.Length == 0)
+            if (!_config.ShowDeepVarialEarly && Casters.Count == 0 && _aoe.Shape != null)
             {
+                _aoe = _aoe with { Activation = Module.CastFinishAt(spell) };
                 Casters.Add(_aoe);
             }
+        }
+    }
+
+    public override void OnEventCast(Actor caster, ActorCastEvent spell)
+    {
+        if (spell.Action.ID == WatchedAction)
+        {
+            Casters.Clear();
+            _aoe = default;
         }
     }
 }

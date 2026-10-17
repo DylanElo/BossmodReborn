@@ -3,7 +3,7 @@ namespace BossMod.Dawntrail.Savage.M03SBruteBomber;
 // Game8 (game8.jp/ff14/630870, macro Ver.2.0):
 // Bombarian Special 8: base grid; 4: pair X MT/D1 NW, ST/D2 NE, H1/D3 SW, H2/D4 SE.
 // Lariat 8-way: base grid around the boss; 4-way: MT/D3 NW, H2/D4 NE, H1/D1 SW, ST/D2 SE.
-// Infernal Spin (attach): D3 MT D4 / D1 ☆ D2 / H1 ST H2. Knockback tower 1: melee NW, ranged SE.
+// Infernal Spin (attach): D3 MT D4 / D1 ☆ D2 / H1 ST H2. Knockback tower 1: melee N/W, ranged S/E.
 // ponytail: Fuse or Foe, Fusefield order, Diveboom 8/4 shock and towers 2-3 are left to plain pathfinding; add when a replay shows them going wrong.
 sealed class Game8Strategy(BossModule module) : Game8Positions(module, static c => c.M3S)
 {
@@ -77,7 +77,10 @@ sealed class Game8Strategy(BossModule module) : Game8Positions(module, static c 
             && towers.CurState is BarbarousBarrageTowers.State.NextNS or BarbarousBarrageTowers.State.NextEW)
         {
             var melee = a is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2;
-            return At(center, melee ? NW : SE, 10f);
+            var dir = towers.CurState == BarbarousBarrageTowers.State.NextNS
+                ? (melee ? N : S)
+                : (melee ? W : E);
+            return At(center, dir, 11f);
         }
         return null;
     }

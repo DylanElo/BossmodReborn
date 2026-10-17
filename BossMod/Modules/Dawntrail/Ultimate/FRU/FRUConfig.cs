@@ -4,14 +4,14 @@
 public sealed class FRUConfig() : ConfigNode()
 {
     [PropertyDisplay("Mana strategy for P1-P3 (assignments and movement)")]
-    public bool P123ManaStrategy = false;
+    public bool P123ManaStrategy = true;
 
     // TODO: fixed tethers option
     [PropertyDisplay("P1 Bound of Faith (light party tethers): group assignments & flex priority (lower number flexes)")]
     [GroupDetails(["N prio 1", "N prio 2", "N prio 3", "N prio 4", "S prio 1", "S prio 2", "S prio 3", "S prio 4"])]
     [GroupPreset("Supports N, DD S", [0, 1, 2, 3, 4, 5, 6, 7])]
     [GroupPreset("G1 N, G2 S, TMRH", [0, 4, 3, 7, 1, 5, 2, 6])]
-    public GroupAssignmentUnique P1BoundOfFaithAssignment = GroupAssignmentUnique.DefaultRoles();
+    public GroupAssignmentUnique P1BoundOfFaithAssignment = new() { Assignments = [2, 3, 0, 1, 4, 5, 6, 7] }; // matches the saved Mana PF config
 
     [PropertyDisplay("P1 Fall of Faith (cone tethers): conga priority (two people without tethers with lower priorities join odd group)")]
     [GroupDetails(["1", "2", "3", "4", "5", "6", "7", "8"])]
@@ -20,7 +20,7 @@ public sealed class FRUConfig() : ConfigNode()
     public GroupAssignmentUnique P1FallOfFaithAssignment = new() { Assignments = [2, 3, 0, 1, 4, 5, 6, 7] };
 
     [PropertyDisplay("P1 Fall of Faith (cone tethers): odd groups go W (rather than N)")]
-    public bool P1FallOfFaithEW = false;
+    public bool P1FallOfFaithEW = true;
 
     [PropertyDisplay("P1 Explosions: tower fill priority (lower number goes north)")]
     [GroupDetails(["Tank N", "Tank S", "Fixed N", "Fixed Center", "Fixed S", "Flex 1", "Flex 2", "Flex 3"])]
@@ -42,7 +42,7 @@ public sealed class FRUConfig() : ConfigNode()
     public bool P2DiamondDustSupportsCCW;
 
     [PropertyDisplay("P2 Diamond Dust: DD go to CCW intercardinal")]
-    public bool P2DiamondDustDDCCW;
+    public bool P2DiamondDustDDCCW = true;
 
     [PropertyDisplay("P2 Diamond Dust: knockback groups")]
     [GroupDetails(["G1 (CCW from N)", "G2 (CW from NE)"])]
@@ -51,7 +51,7 @@ public sealed class FRUConfig() : ConfigNode()
     [PropertyDisplay("P2 Light Rampant: conga spots (lower numbers to the west, assume CW rotation)")]
     [GroupDetails(["N1", "N2", "N3", "N4", "S1", "S2", "S3", "S4"])]
     [GroupPreset("HHTT/RRMM", [2, 3, 0, 1, 6, 7, 4, 5])]
-    public GroupAssignmentUnique P2LightRampantAssignment = GroupAssignmentUnique.DefaultRoles();
+    public GroupAssignmentUnique P2LightRampantAssignment = new() { Assignments = [2, 3, 0, 1, 4, 5, 6, 7] }; // matches the saved Mana PF config
 
     [PropertyDisplay("P3 Ultimate Relativity: spot assignments (lower number goes NW/SW)")]
     [GroupDetails(["1", "2", "3", "4"])]
@@ -74,7 +74,7 @@ public sealed class FRUConfig() : ConfigNode()
     public bool P3ApocalypseStaticSpreads;
 
     [PropertyDisplay("P4: Mana / Nukemaru strategy", tooltip: "Alternating 7:1 Akh Morn, attack-marker puddles, near-center Y rewind and role spreads. Requires correct party roles and blue attack markers 1-4.")]
-    public bool P4ManaStrategy;
+    public bool P4ManaStrategy = true;
 
     [PropertyDisplay("P4 Darklit Dragonsong: legacy assignments (Mana uses horizontal party roles)")]
     [GroupDetails(["Support prio1", "Support prio2", "Support prio3", "Support prio4", "DD prio1", "DD prio2", "DD prio3", "DD prio4"])]
@@ -84,7 +84,7 @@ public sealed class FRUConfig() : ConfigNode()
     [PropertyDisplay("P4 Crystallize Time: assignments for claws (lower prio goes west)")]
     [GroupDetails(["Prio 1", "Prio 2", "Prio 3", "Prio 4", "Prio 5", "Prio 6", "Prio 7", "Prio 8"])]
     [GroupPreset("Default HTMR", [3, 2, 1, 0, 4, 5, 6, 7])]
-    public GroupAssignmentUnique P4CrystallizeTimeAssignments = new() { Assignments = [3, 2, 1, 0, 4, 5, 6, 7] };
+    public GroupAssignmentUnique P4CrystallizeTimeAssignments = new() { Assignments = [1, 2, 0, 7, 3, 4, 5, 6] };
 
     // ai-only settings
     [SectionStart("AI-only settings")]

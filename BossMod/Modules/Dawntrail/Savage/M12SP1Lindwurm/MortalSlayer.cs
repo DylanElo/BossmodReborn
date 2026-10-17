@@ -139,7 +139,7 @@ sealed class MortalSlayer(BossModule module) : Components.GenericAOEs(module)
             var closest = party.Closest(orb.Position);
             if (closest != null)
             {
-                _aoes.Add(new(_shape, closest.Position, default, _mechanicActivation));
+                _aoes.Add(new(_shape, closest.Position, default, _mechanicActivation, actorID: closest.InstanceID));
             }
         }
     }
@@ -256,9 +256,81 @@ sealed class MortalSlayer(BossModule module) : Components.GenericAOEs(module)
         }
     }
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        // Avoid other players' baited circles, but NOT your own
+        foreach (var aoe in _aoes)
+        {
+            if (aoe.ActorID != actor.InstanceID)
+                hints.AddForbiddenZone(aoe.ShapeDistance ?? aoe.Shape.Distance(aoe.Origin, aoe.Rotation), aoe.Activation);
+        }
+
+        if (_purpleSideIsLeft == null)
+            return;
+
+        var currentWave = GetCurrentWaveIndex();
+        if (currentWave < 0)
+            return;
+
+        var (isDPS, isHealer, isTank) = GetRoleInfo(slot, actor);
+        var bossPos = Module.PrimaryActor.Position;
+        var purpleLeft = _purpleSideIsLeft.Value;
+        var targetIsLeft = (isHealer || isTank) ? purpleLeft : !purpleLeft;
+
+        var partyAssignment = _partyConfig[Raid.Members[slot].ContentId];
+        var isCurrentBaiter = false;
+        if (isDPS && _dpsGreenBaited < DPSOrder.Length && DPSOrder[_dpsGreenBaited] == partyAssignment)
+            isCurrentBaiter = true;
+        else if (isHealer && _healerGreenBaited < HealerOrder.Length && HealerOrder[_healerGreenBaited] == partyAssignment)
+            isCurrentBaiter = true;
+        else if (isTank && _tankPurpleBaited < TankOrder.Length && TankOrder[_tankPurpleBaited] == partyAssignment)
+            isCurrentBaiter = true;
+
+        if (isCurrentBaiter)
+        {
+            OrbInfo? targetOrb = null;
+            var bestDistSq = float.MaxValue;
+            foreach (var orb in _allOrbs)
+            {
+                if (!IsOrbActive(orb) || orb.WaveIndex != currentWave)
+                    continue;
+
+                var matchesRole = isTank ? orb.IsPurple : (isHealer ? (!orb.IsPurple && IsOnPurpleSide(orb)) : (!orb.IsPurple && !IsOnPurpleSide(orb)));
+                if (!matchesRole)
+                    continue;
+
+                var dSq = (orb.Orb.Position - actor.Position).LengthSq();
+                if (dSq < bestDistSq)
+                {
+                    bestDistSq = dSq;
+                    targetOrb = orb;
+                }
+            }
+
+            if (targetOrb != null)
+                hints.GoalZones.Add(AIHints.GoalProximity(targetOrb.Value.Orb.Position, 2f, 10f));
+        }
+        else
+        {
+            var waitSideX = targetIsLeft ? bossPos.X - 10f : bossPos.X + 10f;
+            var waitPos = new WPos(waitSideX, bossPos.Z + 8f);
+            hints.GoalZones.Add(AIHints.GoalProximity(waitPos, 4f, 2f));
+        }
+    }
+
     public override void AddHints(int slot, Actor actor, TextHints hints)
     {
-        base.AddHints(slot, actor, hints);
+        var aoes = ActiveAOEs(slot, actor);
+        var len = aoes.Length;
+        for (var i = 0; i < len; ++i)
+        {
+            ref readonly var aoe = ref aoes[i];
+            if (aoe.Risky && aoe.ActorID != actor.InstanceID && aoe.Check(actor.Position))
+            {
+                hints.Add(WarningText);
+                break;
+            }
+        }
 
         if (_purpleSideIsLeft == null)
             return;
