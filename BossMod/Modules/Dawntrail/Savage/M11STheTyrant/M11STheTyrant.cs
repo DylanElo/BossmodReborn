@@ -4,6 +4,6 @@ sealed class CrownOfArcadia(BossModule module) : Components.RaidwideCast(module,
 sealed class UltimateTrophyWeapons(BossModule module) : Components.CastHint(module, (uint)AID.UltimateTrophyWeapons, "Ultimate Trophy Weapons");
 
 [ModuleInfo(BossModuleInfo.Maturity.Contributed, PrimaryActorOID = (uint)OID.Boss, Contributors = "Topas", GroupType = BossModuleInfo.GroupType.CFC,
-GroupID = 1073u, NameID = 14305u, SortOrder = 1, PlanLevel = 0)]
+GroupID = 1073u, NameID = 14305u, SortOrder = 1, PlanLevel = 100)]
 
 public sealed class M11STheTyrant(WorldState ws, Actor primary) : BossModule(ws, primary, ArenaChanges.ArenaCenter, ArenaChanges.InitialBounds);

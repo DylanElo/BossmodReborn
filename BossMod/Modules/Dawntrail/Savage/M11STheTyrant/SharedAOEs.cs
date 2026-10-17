@@ -122,6 +122,16 @@ sealed class MaelstromGustCones(BossModule module) : Components.GenericAOEs(modu
 
         return CollectionsMarshal.AsSpan(_aoes);
     }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (_resolved)
+            return;
+        foreach (var source in WorldState.Actors.Where(a => a.OID == (uint)OID.Maelstrom))
+            foreach (var baiter in Raid.WithoutSlot(false, true, true).SortedByRange(source.Position).Take(2))
+                if (baiter != actor)
+                    hints.AddForbiddenZone(GustCone.Distance(source.Position, Angle.FromDirection(baiter.Position - source.Position)));
+    }
 }
 
 sealed class MaelstromBaitSafeSpots(BossModule module) : BossComponent(module)
@@ -139,12 +149,27 @@ sealed class MaelstromBaitSafeSpots(BossModule module) : BossComponent(module)
 
     public override void DrawArenaForeground(int slot, Actor pc)
     {
-        if (pc == null || _cones == null || _cones._resolved)
-            return;
+        if (SafeSpot(slot) is WPos spot)
+        {
+            Arena.ZoneCircleOutline(spot, Radius, Colors.Safe);
+            Arena.AddLine(pc.Position, spot, Colors.Safe);
+        }
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (SafeSpot(slot) is WPos spot)
+            hints.GoalZones.Add(AIHints.GoalProximity(spot, Radius, 10f));
+    }
+
+    private WPos? SafeSpot(int slot)
+    {
+        if (_cones == null || _cones._resolved)
+            return null;
 
         var assignments = _roles.AssignmentsPerSlot(WorldState.Party);
         if (assignments.Length == 0 || (uint)slot >= (uint)assignments.Length)
-            return;
+            return null;
 
         var role = assignments[slot];
 
@@ -154,7 +179,7 @@ sealed class MaelstromBaitSafeSpots(BossModule module) : BossComponent(module)
                 ++count;
 
         if (count < 4)
-            return;
+            return null;
 
         foreach (var a in WorldState.Actors)
         {
@@ -203,12 +228,9 @@ sealed class MaelstromBaitSafeSpots(BossModule module) : BossComponent(module)
             }
 
             if (spot != default)
-            {
-                Arena.ZoneCircleOutline(spot, Radius, Colors.Safe);
-                Arena.AddLine(pc.Position, spot, Colors.Safe);
-                return;
-            }
+                return spot;
         }
+        return null;
     }
 
     private static WPos Offset(WPos origin, Angle angle)

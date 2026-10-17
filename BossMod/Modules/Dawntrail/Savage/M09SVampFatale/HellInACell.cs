@@ -8,7 +8,7 @@ sealed class BloodyBondage(BossModule module) : Components.CastTowers(module, (u
     private static readonly M09SVampFataleConfig _config = Service.Config.Get<M09SVampFataleConfig>();
     private static readonly PartyRolesConfig _partyConfig = Service.Config.Get<PartyRolesConfig>();
     private BitMask _soaked;
-    private readonly string[] _towerLabel = ["T", "H", "M", "R"];
+    private string[] TowerLabels => _config.Assignments == M09SVampFataleConfig.AssignmentStrategy.Game8 ? ["T", "M", "R", "H"] : ["T", "H", "M", "R"];
 
     // (towers[i].Position - Arena.Center).ToAngle().Deg, Util/Angle says S=0, W=-90, E=90, N=-/+180
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
@@ -77,7 +77,7 @@ sealed class BloodyBondage(BossModule module) : Components.CastTowers(module, (u
                 else if (numInside == 0)
                 {
                     towers[i].Shape.Outline(Arena, towers[i].Position, towers[i].Rotation, default, 2f);
-                    Arena.TextWorld(towers[i].Position, _towerLabel[i], Colors.Safe);
+                    Arena.TextWorld(towers[i].Position, TowerLabels[i], Colors.Safe);
                 }
             }
         }
@@ -167,10 +167,17 @@ sealed class BloodyBondage(BossModule module) : Components.CastTowers(module, (u
             }
             else
             {
-                // melee sacrifices uptime if they immediately move to towers
-                // inverted forbidden zone an option to delay movement?
                 ref readonly var t = ref towers[index];
-                hints.GoalZones.Add(AIHints.GoalSingleTarget(t.Position, 3f, 9f));
+                if (_config.Assignments == M09SVampFataleConfig.AssignmentStrategy.Game8)
+                {
+                    // Arrive for the cast finish; retain melee uptime while there is enough travel time.
+                    hints.AddForbiddenZone(new SDInvertedCircle(t.Position, Radius), t.Activation);
+                    for (var i = 0; i < towers.Length; ++i)
+                        if (i != index)
+                            hints.AddForbiddenZone(towers[i].Shape, towers[i].Position, default, towers[i].Activation);
+                }
+                else
+                    hints.GoalZones.Add(AIHints.GoalSingleTarget(t.Position, 3f, 9f));
             }
         }
     }
@@ -190,7 +197,7 @@ sealed class BloodyBondage(BossModule module) : Components.CastTowers(module, (u
             _ => -1
         };
 
-        return index;
+        return _config.Assignments == M09SVampFataleConfig.AssignmentStrategy.Game8 ? index switch { 1 => 3, 2 => 1, 3 => 2, _ => index } : index;
     }
 
     private int GetLightParty(int pcSlot)

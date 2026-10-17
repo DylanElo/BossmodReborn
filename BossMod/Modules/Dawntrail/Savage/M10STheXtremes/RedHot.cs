@@ -161,16 +161,46 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
 
     private void DrawPlayerPosition(int pcSlot, Actor pc, WPos? varialOrigin = null, Angle? varialRotation = null)
     {
+        if (PlayerPosition(pcSlot, varialOrigin, varialRotation) is { } destination)
+            Arena.ZoneCircleOutline(destination.position, destination.radius, pc.Position.InCircle(destination.position, destination.radius) ? Colors.Safe : Colors.Danger);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (!_config.EnableStrategyAI || CurrentState == State.None)
+            return;
+        // Deep Varial previews the fire drop before spread markers appear; other stages require an actual spread.
+        if (CurrentState != State.DeepVarial && !Spreads.Any(s => s.Target == actor))
+            return;
+        var deepVarial = Module.FindComponent<DeepVarial>();
+        var cleaves = deepVarial != null ? deepVarial.ActiveCasters : [];
+        var origin = cleaves.Length > 0 ? (WPos?)cleaves[0].Origin : null;
+        var rotation = cleaves.Length > 0 ? (Angle?)cleaves[0].Rotation : null;
+        if (PlayerPosition(slot, origin, rotation) is { } destination)
+        {
+            hints.GoalZones.Add(AIHints.GoalProximity(destination.position, destination.radius, 10f));
+            foreach (var spread in Spreads)
+                if (spread.Target == actor)
+                {
+                    hints.AddForbiddenZone(new SDInvertedCircle(destination.position, destination.radius), spread.Activation);
+                    break;
+                }
+        }
+    }
+
+    private (WPos position, float radius)? PlayerPosition(int pcSlot, WPos? varialOrigin = null, Angle? varialRotation = null)
+    {
         var firePlayers = _debuff.FirePlayers;
         if (firePlayers.Any())
         {
             if (!firePlayers[pcSlot])
-                return;
+                return null;
         }
 
         var assignment = _partyConfig[Raid.Members[pcSlot].ContentId];
         if (assignment == PartyRolesConfig.Assignment.Unassigned)
-            return;
+            return null;
 
         var role = assignment switch
         {
@@ -203,22 +233,20 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
                 var col = role is 2 or 3 ? 1 : 0;
                 var origin = new WPos(113f, 97f);
                 var targetPos = origin + new WDir(col * 6f, row * 6f);
-                var targetSd = new SDCircle(targetPos, radius);
-                Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+                return (targetPos, radius);
             }
             else
             {
                 var origin = new WPos(119f, 93f);
                 var mult = role == 3 ? 0 : role + 1;
                 var targetPos = origin + new WDir(0f, mult * 6f);
-                var targetSd = new SDCircle(targetPos, radius);
-                Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+                return (targetPos, radius);
             }
         }
         else if (CurrentState == State.DeepVarial)
         {
             if (varialOrigin == null || varialRotation == null)
-                return;
+                return null;
 
             // Deep Varial
             // Hector -> T M H R from boss, R on other wall
@@ -232,16 +260,14 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
                 {
                     targetPos += varialRotation.Value.ToDirection() * 7f;
                 }
-                var targetSd = new SDCircle(targetPos.Value, radius);
-                Arena.ZoneCircleOutline(targetPos.Value, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+                return (targetPos.Value, radius);
             }
             else
             {
                 // T M H R -> AOE 5f radius, assume 1f from edge, say 5.5f inbetween -> 102.5f, 108f, 113.5f, 119f
                 // leeway to move after deep varial resolves
                 var targetPos = varialOrigin + varialRotation.Value.ToDirection() + new WDir(2.5f + role * 5.5f, 0f);
-                var targetSd = new SDCircle(targetPos.Value, radius);
-                Arena.ZoneCircleOutline(targetPos.Value, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+                return (targetPos.Value, radius);
             }
         }
         else
@@ -259,8 +285,7 @@ sealed class AlleyOopInferno(BossModule module) : Components.SpreadFromCastTarge
                 PartyRolesConfig.Assignment.H2 => new(119f, 118f),
                 _ => default
             };
-            var targetSd = new SDCircle(targetPos, radius);
-            Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+            return (targetPos, radius);
         }
     }
 }

@@ -24,9 +24,13 @@ sealed class AllThingsEnding(BossModule module) : Components.GenericBaitAway(mod
         switch (spell.Action.ID)
         {
             case (uint)AID.FuturesEndCast:
+                if (dmuConfig.YarnPirenStrategy)
+                    clones.Clear();
                 currentBait = BaitType.Far;
                 break;
             case (uint)AID.PastsEndCast:
+                if (dmuConfig.YarnPirenStrategy)
+                    clones.Clear();
                 currentBait = BaitType.Close;
                 break;
             case (uint)AID.AllThingsEnding:
@@ -46,6 +50,8 @@ sealed class AllThingsEnding(BossModule module) : Components.GenericBaitAway(mod
 
     public override void Update()
     {
+        if (towers?.Towers.Count == 2)
+            lastKnownTowerMidPoint = towers.Towers[0].Position + (towers.Towers[1].Position - towers.Towers[0].Position) * 0.5f;
         CurrentBaits.Clear();
         baiters.Clear();
 
@@ -154,6 +160,25 @@ sealed class AllThingsEnding(BossModule module) : Components.GenericBaitAway(mod
         }
 
         BaitSafeSpot(midpoint);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        // Unsnapped kicks must be baited toward the waiting group; locked casts have their own AOE component.
+        if (!dmuConfig.YarnPirenStrategy || aoesLocked)
+            base.AddAIHints(slot, actor, assignment, hints);
+        if (!dmuConfig.YarnPirenStrategy || aoesLocked || clones.Count == 0 || shapes == null || assignment == PartyRolesConfig.Assignment.Unassigned)
+            return;
+        WPos? destination = null;
+        if (shapes.currentTowerSet == 9 && WorldState.Waymarks.GetFieldMark((int)Waymark.A) is Vector3 a)
+            destination = new WPos(a);
+        else if (shapes.currentTowerSet < 9 && (shapes.currentTowerSet & 1) != 0 && towers?.Towers.Count == 2 && lastKnownTowerMidPoint is WPos midpoint)
+        {
+            var south = (midpoint - Arena.Center).Normalized();
+            destination = currentBait == BaitType.Close ? midpoint + south * 2 : midpoint - south * 13;
+        }
+        if (destination is WPos position)
+            hints.AddForbiddenZone(new SDInvertedCircle(position, 1f), default);
     }
 
     private void BaitSafeSpot(WPos midPoint)

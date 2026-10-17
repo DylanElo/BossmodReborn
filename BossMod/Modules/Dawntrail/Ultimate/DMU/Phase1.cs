@@ -424,6 +424,39 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
         base.DrawArenaForeground(pcSlot, pc);
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        var firstZone = hints.ForbiddenZones.Count;
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned || partyConfig.SlotsPerAssignment(Raid).Length == 0 || Stacks.Count + Spreads.Count == 0)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
+        {
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count > 0)
+        {
+            // A whole-party puddle bait replaces attraction to the party's previous stack position.
+            if (Stacks.Count > 0 && Spreads.Count == 0)
+                hints.ForbiddenZones.RemoveRange(firstZone, hints.ForbiddenZones.Count - firstZone);
+            hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]), default);
+        }
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
+        // Yarn starts south and repeats north; retain the existing uptime geometry and clearance.
+        if (dmuConfig.YarnPirenStrategy)
+        {
+            var draw = add;
+            add = (position, radius, color, thickness) => draw(new(position.X, 2f * Arena.Center.Z - position.Z), radius, color, thickness);
+        }
+        var strategy = dmuConfig.YarnPirenStrategy ? DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime : dmuConfig.P1GravenImage2;
         var assignment = partyConfig[Raid.Members[pcSlot].ContentId];
         var partyConfigRolesSet = true;
 
@@ -436,39 +469,39 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
         // First puddles bait
         if (Stacks.Count != 0 && totalStacks == 4)
         {
-            if (dmuConfig.P1GravenImage2 == DMUConfig.P1GravenImage2Strategy.GravenImage2Normal)
+            if (strategy == DMUConfig.P1GravenImage2Strategy.GravenImage2Normal)
             {
                 if (partyConfigRolesSet)
                 {
                     if (assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or
                         PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.R1)
                     {
-                        Arena.ZoneCircleOutline(Arena.Center + new WDir(0f, -19.5f), 1.0f, Colors.Safe, 2);
+                        add(Arena.Center + new WDir(0f, -19.5f), 1.0f, Colors.Safe, 2);
                     }
 
                     if (assignment is PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H2 or
                         PartyRolesConfig.Assignment.M2 or PartyRolesConfig.Assignment.R2)
                     {
-                        Arena.ZoneCircleOutline(Arena.Center + new WDir(0f, 19.5f), 1.0f, Colors.Safe, 2);
+                        add(Arena.Center + new WDir(0f, 19.5f), 1.0f, Colors.Safe, 2);
                     }
                 }
                 else
                 {
-                    Arena.ZoneCircleOutline(Arena.Center + new WDir(0f, 19.5f), 1.0f, Colors.Safe, 2);
-                    Arena.ZoneCircleOutline(Arena.Center + new WDir(0f, -19.5f), 1.0f, Colors.Safe, 2);
+                    add(Arena.Center + new WDir(0f, 19.5f), 1.0f, Colors.Safe, 2);
+                    add(Arena.Center + new WDir(0f, -19.5f), 1.0f, Colors.Safe, 2);
                 }
             }
 
-            if (dmuConfig.P1GravenImage2 == DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime)
+            if (strategy == DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime)
             {
-                Arena.ZoneCircleOutline(new WPos(100.000f, 87.500f), 1.0f, Colors.Safe, 2);
+                add(new WPos(100.000f, 87.500f), 1.0f, Colors.Safe, 2);
             }
         }
 
         // Second puddles bait - Ensuring the other isn't close - Only needed for normal strat
         if (Stacks.Count != 0 && totalStacks == 8)
         {
-            if (dmuConfig.P1GravenImage2 == DMUConfig.P1GravenImage2Strategy.GravenImage2Normal)
+            if (strategy == DMUConfig.P1GravenImage2Strategy.GravenImage2Normal)
             {
                 var puddles = Module.FindComponent<GravitasPuddles>();
 
@@ -496,32 +529,32 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
                     if (assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or
                         PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.R1)
                     {
-                        Arena.ZoneCircleOutline(puddle2.Position - (puddle2.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
+                        add(puddle2.Position - (puddle2.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
                     }
 
                     if (assignment is PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H2 or
                         PartyRolesConfig.Assignment.M2 or PartyRolesConfig.Assignment.R2)
                     {
-                        Arena.ZoneCircleOutline(puddle1.Position - (puddle1.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
+                        add(puddle1.Position - (puddle1.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
                     }
                 }
                 else
                 {
-                    Arena.ZoneCircleOutline(puddle1.Position - (puddle1.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
-                    Arena.ZoneCircleOutline(puddle2.Position - (puddle2.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
+                    add(puddle1.Position - (puddle1.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
+                    add(puddle2.Position - (puddle2.Position - Module.Center).Normalized() * 5.5f, 1.0f, Colors.Safe, 2);
                 }
             }
 
-            if (dmuConfig.P1GravenImage2 == DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime)
+            if (strategy == DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime)
             {
-                Arena.ZoneCircleOutline(new WPos(100.000f, 112.500f), 1.0f, Colors.Safe, 2);
+                add(new WPos(100.000f, 112.500f), 1.0f, Colors.Safe, 2);
             }
         }
 
         // Spreads hint
         if (Spreads.Count != 0)
         {
-            if (dmuConfig.P1GravenImage2 == DMUConfig.P1GravenImage2Strategy.GravenImage2Normal)
+            if (strategy == DMUConfig.P1GravenImage2Strategy.GravenImage2Normal)
             {
                 if (partyConfigRolesSet)
                 {
@@ -529,28 +562,28 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
                     {
                         if (assignment == PartyRolesConfig.Assignment.MT)
                         {
-                            Arena.ZoneCircleOutline(new WPos(90.054f, 100.718f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(90.054f, 100.718f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.OT)
                         {
-                            Arena.ZoneCircleOutline(new WPos(109.197f, 99.618f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(109.197f, 99.618f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.H1)
                         {
-                            Arena.ZoneCircleOutline(new WPos(87.971f, 86.119f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(87.971f, 86.119f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.H2)
                         {
-                            Arena.ZoneCircleOutline(new WPos(113.566f, 112.415f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(113.566f, 112.415f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment is PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 or
                             PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2)
                         {
-                            Arena.ZoneCircleOutline(Module.Center, 1.0f, Colors.Safe, 2);
+                            add(Module.Center, 1.0f, Colors.Safe, 2);
                         }
                     }
 
@@ -558,28 +591,28 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
                     {
                         if (assignment == PartyRolesConfig.Assignment.M1)
                         {
-                            Arena.ZoneCircleOutline(new WPos(90.054f, 100.718f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(90.054f, 100.718f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.M2)
                         {
-                            Arena.ZoneCircleOutline(new WPos(109.197f, 99.618f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(109.197f, 99.618f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.R1)
                         {
-                            Arena.ZoneCircleOutline(new WPos(87.971f, 86.119f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(87.971f, 86.119f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.R2)
                         {
-                            Arena.ZoneCircleOutline(new WPos(113.566f, 112.415f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(113.566f, 112.415f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or
                             PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.H2)
                         {
-                            Arena.ZoneCircleOutline(Module.Center, 1.0f, Colors.Safe, 2);
+                            add(Module.Center, 1.0f, Colors.Safe, 2);
                         }
                     }
                 }
@@ -588,26 +621,26 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
                     if (tetherGroup == TetherGroup.Support ? pc.Class.IsSupport() : tetherGroup == TetherGroup.DPS && pc.Class.IsDD())
                     {
                         // MT/M1 - [90.054, 0.000, 100.718, -178.033]
-                        Arena.ZoneCircleOutline(new WPos(90.054f, 100.718f), 1.0f, Colors.Safe, 2);
+                        add(new WPos(90.054f, 100.718f), 1.0f, Colors.Safe, 2);
 
                         // H1/R1 - [87.971, 0.000, 86.119, 37.967]
-                        Arena.ZoneCircleOutline(new WPos(87.971f, 86.119f), 1.0f, Colors.Safe, 2);
+                        add(new WPos(87.971f, 86.119f), 1.0f, Colors.Safe, 2);
 
                         // OT/M2 - [109.197, 0.000, 99.618, -87.793]
-                        Arena.ZoneCircleOutline(new WPos(109.197f, 99.618f), 1.0f, Colors.Safe, 2);
+                        add(new WPos(109.197f, 99.618f), 1.0f, Colors.Safe, 2);
 
                         // H2/R2 - [113.566, 0.000, 112.415, -133.273]
-                        Arena.ZoneCircleOutline(new WPos(113.566f, 112.415f), 1.0f, Colors.Safe, 2);
+                        add(new WPos(113.566f, 112.415f), 1.0f, Colors.Safe, 2);
                     }
                     else
                     {
                         // Middle
-                        Arena.ZoneCircleOutline(Module.Center, 1.0f, Colors.Safe, 2);
+                        add(Module.Center, 1.0f, Colors.Safe, 2);
                     }
                 }
             }
 
-            if (dmuConfig.P1GravenImage2 == DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime)
+            if (strategy == DMUConfig.P1GravenImage2Strategy.GravenImage2Uptime)
             {
                 if (partyConfigRolesSet)
                 {
@@ -615,36 +648,36 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
                     {
                         if (assignment == PartyRolesConfig.Assignment.MT)
                         {
-                            Arena.ZoneCircleOutline(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.OT)
                         {
-                            Arena.ZoneCircleOutline(new WPos(107.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(107.000f, 100.000f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.H1 && totalStacks == 4)
                         {
-                            Arena.ZoneCircleOutline(new WPos(86.500f, 87.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(86.500f, 87.500f), 1.0f, Colors.Safe, 2);
                         }
                         else if (assignment == PartyRolesConfig.Assignment.H1 && totalStacks == 8)
                         {
-                            Arena.ZoneCircleOutline(new WPos(86.500f, 112.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(86.500f, 112.500f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.H2 && totalStacks == 4)
                         {
-                            Arena.ZoneCircleOutline(new WPos(113.500f, 87.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(113.500f, 87.500f), 1.0f, Colors.Safe, 2);
                         }
                         else if (assignment == PartyRolesConfig.Assignment.H2 && totalStacks == 8)
                         {
-                            Arena.ZoneCircleOutline(new WPos(113.500f, 112.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(113.500f, 112.500f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment is PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 or
                             PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2)
                         {
-                            Arena.ZoneCircleOutline(Module.Center, 1.0f, Colors.Safe, 2);
+                            add(Module.Center, 1.0f, Colors.Safe, 2);
                         }
                     }
 
@@ -652,36 +685,36 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
                     {
                         if (assignment == PartyRolesConfig.Assignment.M1)
                         {
-                            Arena.ZoneCircleOutline(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.M2)
                         {
-                            Arena.ZoneCircleOutline(new WPos(107.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(107.000f, 100.000f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.R1 && totalStacks == 4)
                         {
-                            Arena.ZoneCircleOutline(new WPos(86.500f, 87.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(86.500f, 87.500f), 1.0f, Colors.Safe, 2);
                         }
                         else if (assignment == PartyRolesConfig.Assignment.R1 && totalStacks == 8)
                         {
-                            Arena.ZoneCircleOutline(new WPos(86.500f, 112.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(86.500f, 112.500f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment == PartyRolesConfig.Assignment.R2 && totalStacks == 4)
                         {
-                            Arena.ZoneCircleOutline(new WPos(113.500f, 87.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(113.500f, 87.500f), 1.0f, Colors.Safe, 2);
                         }
                         else if (assignment == PartyRolesConfig.Assignment.R2 && totalStacks == 8)
                         {
-                            Arena.ZoneCircleOutline(new WPos(113.500f, 112.500f), 1.0f, Colors.Safe, 2);
+                            add(new WPos(113.500f, 112.500f), 1.0f, Colors.Safe, 2);
                         }
 
                         if (assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or
                             PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.H2)
                         {
-                            Arena.ZoneCircleOutline(Module.Center, 1.0f, Colors.Safe, 2);
+                            add(Module.Center, 1.0f, Colors.Safe, 2);
                         }
                     }
                 }
@@ -810,6 +843,16 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
     private readonly List<WPos> hints = [];
     private enum Direction { UP, DOWN, LEFT, RIGHT }
     private readonly DMUConfig dmuConfig = Service.Config.Get<DMUConfig>();
+    private DMUConfig.P1TeleTrouncingStrategy TeleStrategy => dmuConfig.YarnPirenStrategy ? DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo : dmuConfig.P1TeleTrouncing;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints aiHints)
+    {
+        if (slot != PartyState.PlayerSlot || NumCasts >= 16 || Debuff1 == null || Debuff2 == null || hints.Count == 0)
+            return;
+        var first = Debuff1.Value.activation < Debuff2.Value.activation ? Debuff1.Value.activation : Debuff2.Value.activation;
+        var second = Debuff1.Value.activation > Debuff2.Value.activation ? Debuff1.Value.activation : Debuff2.Value.activation;
+        aiHints.AddForbiddenZone(new SDInvertedCircle(hints[0], 1f), hints.Count > 1 ? first : second);
+    }
 
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
     {
@@ -861,13 +904,13 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
         {
             if (Debuff1.Value.direction == Direction.DOWN)
             { // A waymark
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
                 {
                     hints.Add(new WPos(87.750f, 88.030f));
                     hints.Add(new WPos(87.750f, 93.570f));
                 }
 
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
                 {
                     hints.Add(new WPos(112.000f, 94.000f));
                     hints.Add(new WPos(112.000f, 100.000f));
@@ -876,13 +919,13 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
 
             if (Debuff1.Value.direction == Direction.LEFT)
             { // B waymark
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
                 {
                     hints.Add(new WPos(112.135f, 87.993f));
                     hints.Add(new WPos(106.579f, 87.922f));
                 }
 
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
                 {
                     hints.Add(new WPos(106.000f, 112.000f));
                     hints.Add(new WPos(100.000f, 112.000f));
@@ -891,13 +934,13 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
 
             if (Debuff1.Value.direction == Direction.UP)
             { // C waymark
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
                 {
                     hints.Add(new WPos(111.989f, 112.003f));
                     hints.Add(new WPos(112.125f, 106.306f));
                 }
 
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
                 {
                     hints.Add(new WPos(88.000f, 106.000f));
                     hints.Add(new WPos(88.000f, 100.000f));
@@ -906,13 +949,13 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
 
             if (Debuff1.Value.direction == Direction.RIGHT)
             { // D waymark
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
                 {
                     hints.Add(new WPos(88.069f, 112.037f));
                     hints.Add(new WPos(93.798f, 112.161f));
                 }
 
-                if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+                if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
                 {
                     hints.Add(new WPos(94.000f, 88.000f));
                     hints.Add(new WPos(100.000f, 88.000f));
@@ -931,7 +974,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
 
             var upFirst = Debuff1.Value.direction == Direction.UP ? debuff1First : !debuff1First;
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
             {
                 if (upFirst)
                 {
@@ -945,7 +988,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
                 }
             }
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
             {
                 if (upFirst)
                 {
@@ -965,7 +1008,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
         {
             var upFirst = Debuff1.Value.direction == Direction.UP ? debuff1First : !debuff1First;
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
             {
                 if (upFirst)
                 {
@@ -979,7 +1022,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
                 }
             }
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
             {
                 if (upFirst)
                 {
@@ -999,7 +1042,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
         {
             var downFirst = Debuff1.Value.direction == Direction.DOWN ? debuff1First : !debuff1First;
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
             {
                 if (downFirst)
                 {
@@ -1013,7 +1056,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
                 }
             }
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
             {
                 if (downFirst)
                 {
@@ -1033,7 +1076,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
         {
             var downFirst = Debuff1.Value.direction == Direction.DOWN ? debuff1First : !debuff1First;
 
-            if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
+            if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo)
             {
                 if (downFirst)
                 {
@@ -1046,7 +1089,7 @@ sealed class TeleTrouncing(BossModule module) : BossComponent(module)
                     hints.Add(new WPos(88.103f, 106.377f)); // 4 non-waymark
                 }
             }
-            else if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
+            else if (TeleStrategy == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow)
             {
                 if (downFirst)
                 {
@@ -1110,6 +1153,7 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
     private enum TetherGroup { Support, DPS }
     private TetherGroup? tetherSleepGroup = null;
     private TetherGroup? tetherConfusionGroup = null;
+    private bool resolved;
 
     public override void OnTethered(Actor source, in ActorTetherInfo tether)
     {
@@ -1140,13 +1184,35 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
         if (spell.Action.ID == (uint)AID.IdyllicWill)
         {
             Spreads.Clear();
+            resolved = true;
         }
     }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
         base.DrawArenaForeground(pcSlot, pc);
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
+        {
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]), default);
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
+        if (resolved)
+            return;
         var slots = partyConfig.SlotsPerAssignment(Raid);
         if (slots.Length == 0)
         {
@@ -1155,47 +1221,67 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
 
         var assignment = partyConfig[Raid.Members[pcSlot].ContentId];
 
+        if (dmuConfig.YarnPirenStrategy)
+        {
+            // Include the generic spread's 1y safety margin and the destination's 1y tolerance.
+            var offset = assignment switch
+            {
+                PartyRolesConfig.Assignment.MT => new WDir(-4.5f, -4.5f),
+                PartyRolesConfig.Assignment.OT => new WDir(4.5f, -4.5f),
+                PartyRolesConfig.Assignment.M1 => new WDir(-4.5f, 4.5f),
+                PartyRolesConfig.Assignment.M2 => new WDir(4.5f, 4.5f),
+                PartyRolesConfig.Assignment.R1 => new WDir(-10.5f, -10.5f),
+                PartyRolesConfig.Assignment.R2 => new WDir(10.5f, -10.5f),
+                PartyRolesConfig.Assignment.H1 => new WDir(-10.5f, 10.5f),
+                PartyRolesConfig.Assignment.H2 => new WDir(10.5f, 10.5f),
+                _ => default
+            };
+            if (offset != default)
+                add(Arena.Center + offset, 1f, Colors.Safe, 2f);
+            return;
+        }
+
         // Static strategy - keep separate to make it easier to manage
         if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo && dmuConfig.P1GravenImage3Static)
         {
             if (assignment == PartyRolesConfig.Assignment.MT)
             {
-                Arena.ZoneCircleOutline(new WPos(93.636f, 96.500f), 1.0f, Colors.Safe, 2);
+                add(new WPos(93.636f, 96.500f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.OT)
             {
-                Arena.ZoneCircleOutline(new WPos(104.000f, 93.636f), 1.0f, Colors.Safe, 2);
+                add(new WPos(104.000f, 93.636f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.H1)
             {
-                Arena.ZoneCircleOutline(new WPos(90.500f, 106.364f), 1.0f, Colors.Safe, 2);
+                add(new WPos(90.500f, 106.364f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.H2)
             {
-                Arena.ZoneCircleOutline(new WPos(106.364f, 109.500f), 1.0f, Colors.Safe, 2);
+                add(new WPos(106.364f, 109.500f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.M1)
             {
-                Arena.ZoneCircleOutline(new WPos(96.500f, 106.364f), 1.0f, Colors.Safe, 2);
+                add(new WPos(96.500f, 106.364f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.M2)
             {
-                Arena.ZoneCircleOutline(new WPos(106.364f, 104.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(106.364f, 104.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.R1)
             {
-                Arena.ZoneCircleOutline(new WPos(93.636f, 91.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(93.636f, 91.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.R2)
             {
-                Arena.ZoneCircleOutline(new WPos(109.500f, 93.636f), 1.0f, Colors.Safe, 2);
+                add(new WPos(109.500f, 93.636f), 1.0f, Colors.Safe, 2);
             }
         }
 
@@ -1205,12 +1291,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(93.636f, 96.500f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(93.636f, 96.500f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(93.636f, 91.000f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(93.636f, 91.000f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1218,12 +1304,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(93.636f, 96.500f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(93.636f, 96.500f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(93.636f, 91.000f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(93.636f, 91.000f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1231,12 +1317,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(104.000f, 93.636f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(104.000f, 93.636f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(109.500f, 93.636f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(109.500f, 93.636f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1244,12 +1330,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(104.000f, 93.636f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(104.000f, 93.636f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(109.500f, 93.636f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(109.500f, 93.636f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1257,12 +1343,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(96.500f, 106.364f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(96.500f, 106.364f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(90.500f, 106.364f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(90.500f, 106.364f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1270,12 +1356,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(96.500f, 106.364f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(96.500f, 106.364f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(90.500f, 106.364f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(90.500f, 106.364f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1283,12 +1369,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(106.364f, 104.000f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(106.364f, 104.000f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(106.364f, 109.500f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(106.364f, 109.500f), 1.0f, Colors.Safe, 2);
                 }
             }
 
@@ -1296,12 +1382,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(106.364f, 104.000f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(106.364f, 104.000f), 1.0f, Colors.Safe, 2);
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(106.364f, 109.500f), 1.0f, Colors.Safe, 2);
+                    add(new WPos(106.364f, 109.500f), 1.0f, Colors.Safe, 2);
                 }
             }
         }
@@ -1310,42 +1396,42 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
         {
             if (assignment == PartyRolesConfig.Assignment.MT)
             {
-                Arena.ZoneCircleOutline(new WPos(100.000f, 93.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(100.000f, 93.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.OT)
             {
-                Arena.ZoneCircleOutline(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.H1)
             {
-                Arena.ZoneCircleOutline(new WPos(100.000f, 116.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(100.000f, 116.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.H2)
             {
-                Arena.ZoneCircleOutline(new WPos(116.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(116.000f, 100.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.M1)
             {
-                Arena.ZoneCircleOutline(new WPos(100.000f, 108.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(100.000f, 108.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.M2)
             {
-                Arena.ZoneCircleOutline(new WPos(108.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(108.000f, 100.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.R1)
             {
-                Arena.ZoneCircleOutline(new WPos(100.000f, 84.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(100.000f, 84.000f), 1.0f, Colors.Safe, 2);
             }
 
             if (assignment == PartyRolesConfig.Assignment.R2)
             {
-                Arena.ZoneCircleOutline(new WPos(84.000f, 100.000f), 1.0f, Colors.Safe, 2);
+                add(new WPos(84.000f, 100.000f), 1.0f, Colors.Safe, 2);
             }
         }
 
@@ -1355,12 +1441,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 93.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(100.000f, 93.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 84.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(100.000f, 84.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1368,12 +1454,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 93.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(100.000f, 93.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 84.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(100.000f, 84.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1381,12 +1467,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(84.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(84.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1394,12 +1480,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(93.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(84.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(84.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1407,12 +1493,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 108.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(100.000f, 108.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 116.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(100.000f, 116.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1420,12 +1506,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 108.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(100.000f, 108.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(100.000f, 116.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(100.000f, 116.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1433,12 +1519,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(108.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(108.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.Support)
                 {
-                    Arena.ZoneCircleOutline(new WPos(116.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(116.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
 
@@ -1446,12 +1532,12 @@ sealed class GravenImage3(BossModule module) : Components.UniformStackSpread(mod
             {
                 if (tetherSleepGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(108.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
+                    add(new WPos(108.000f, 100.000f), 1.0f, Colors.Safe, 2); // Inwards
                 }
 
                 if (tetherConfusionGroup == TetherGroup.DPS)
                 {
-                    Arena.ZoneCircleOutline(new WPos(116.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
+                    add(new WPos(116.000f, 100.000f), 1.0f, Colors.Safe, 2); // Outwards
                 }
             }
         }

@@ -1,9 +1,7 @@
 namespace BossMod.Dawntrail.Savage.M12SLindwurm;
 
-// TODO: show goal zone for RottingFlesh players
 sealed class GrotesquerieCurtainCall(BossModule module) : Components.UniformStackSpread(module, default, 6f)
 {
-    private const float ChainBreakDistance = 20f;
     private const float ChainGroupUpWindow = 4f;
 
     private readonly bool[] _hasBurstingGrotesquerie = new bool[8];
@@ -29,14 +27,14 @@ sealed class GrotesquerieCurtainCall(BossModule module) : Components.UniformStac
             _hasRottingFlesh[slot] = true;
             _rottingFleshExpiry[slot] = status.ExpireAt;
         }
-        else if (status.ID == (uint)SID.BondsOfFleshAlpha)
+        else if (status.ID is (uint)SID.BondsOfFleshAlpha or (uint)SID.BondsOfFleshBeta)
         {
             _hasBondsAlpha[slot] = true;
             // Set chain activation time when first bond is detected
             if (_chainActivationTime == default)
                 _chainActivationTime = status.ExpireAt;
         }
-        else if (status.ID == (uint)SID.UnbreakableFlesh0)
+        else if (status.ID is (uint)SID.UnbreakableFlesh0 or (uint)SID.UnbreakableFlesh1)
         {
             _hasUnbreakableAlpha[slot] = true;
         }
@@ -58,7 +56,7 @@ sealed class GrotesquerieCurtainCall(BossModule module) : Components.UniformStac
             _hasRottingFlesh[slot] = false;
             _rottingFleshExpiry[slot] = default;
         }
-        else if (status.ID == (uint)SID.BondsOfFleshAlpha)
+        else if (status.ID is (uint)SID.BondsOfFleshAlpha or (uint)SID.BondsOfFleshBeta)
         {
             _hasBondsAlpha[slot] = false;
             // Reset chain activation time when all bonds are gone
@@ -74,7 +72,7 @@ sealed class GrotesquerieCurtainCall(BossModule module) : Components.UniformStac
             if (!anyBondsRemaining)
                 _chainActivationTime = default;
         }
-        else if (status.ID == (uint)SID.UnbreakableFlesh0)
+        else if (status.ID is (uint)SID.UnbreakableFlesh0 or (uint)SID.UnbreakableFlesh1)
         {
             _hasUnbreakableAlpha[slot] = false;
         }
@@ -100,31 +98,39 @@ sealed class GrotesquerieCurtainCall(BossModule module) : Components.UniformStac
         }
     }
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        // Regroup only after spreads/cleanses: chains remember their length when the debuff transforms.
+        if (_hasBondsAlpha[slot] && !_hasBurstingGrotesquerie[slot] && !_hasRottingFlesh[slot]
+            && _chainActivationTime > WorldState.CurrentTime && _chainActivationTime <= WorldState.FutureTime(ChainGroupUpWindow))
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center, 2f), _chainActivationTime);
+
+        if (_hasUnbreakableAlpha[slot] && ChainDestination(assignment) is WPos destination)
+            hints.GoalZones.Add(AIHints.GoalProximity(destination, 1f, 10f));
+    }
+
+    private WPos? ChainDestination(PartyRolesConfig.Assignment assignment)
+    {
+        // Idyllshire: TH west, DPS east, in separate rows; partners are random, so never guess a tether partner.
+        var row = assignment switch
+        {
+            PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.M1 => 0,
+            PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.M2 => 1,
+            PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.R1 => 2,
+            PartyRolesConfig.Assignment.H2 or PartyRolesConfig.Assignment.R2 => 3,
+            _ => -1
+        };
+        return row >= 0 ? Module.Center + new WDir(assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.H2 ? -18f : 18f, -12f + 8f * row) : null;
+    }
+
     private void DrawChainBreakIndicator(int pcSlot, Actor pc)
     {
-        var isSupport = pc.Class.IsSupport();
-
-        for (var i = 0; i < 8; ++i)
+        var assignment = Service.Config.Get<PartyRolesConfig>()[Raid.Members[pcSlot].ContentId];
+        if (ChainDestination(assignment) is WPos destination)
         {
-            if (i == pcSlot || !_hasUnbreakableAlpha[i])
-                continue;
-
-            var partner = Raid[i];
-            if (partner == null)
-                continue;
-
-            var partnerIsSupport = partner.Class.IsSupport();
-            if (isSupport == partnerIsSupport)
-                continue;
-
-            Arena.AddLine(pc.Position, partner.Position, Colors.Danger);
-            var dirToPartner = (partner.Position - pc.Position).Normalized();
-            var breakPos = pc.Position - dirToPartner * ChainBreakDistance;
-            breakPos = Arena.ClampToBounds(breakPos);
-
-            var isInPosition = pc.Position.InCircle(breakPos, 2f);
-            Arena.ZoneCircleOutline(breakPos, 1f, isInPosition ? Colors.Danger : Colors.Safe);
-            break;
+            Arena.AddLine(pc.Position, destination, Colors.Safe);
+            Arena.ZoneCircleOutline(destination, 1f, Colors.Safe);
         }
     }
 

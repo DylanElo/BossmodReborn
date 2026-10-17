@@ -129,6 +129,30 @@ sealed class ChaoticFlood(BossModule module) : Components.SimpleAOEs(module, (ui
     private WDir currentDirection;
     private int castsResolved = 0;
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (SafeSpot(slot, actor) is { } spot)
+            hints.AddForbiddenZone(new SDInvertedCircle(spot, 1f));
+    }
+
+    public WPos? SafeSpot(int slot, Actor actor)
+    {
+        if (!Service.Config.Get<DMUConfig>().YarnPirenStrategy || !secondWaveResolved || clockwise == null || NumCasts >= 8)
+            return null;
+        var hazards = ActiveAOEs(slot, actor).ToArray().Select(a => a.Shape.Distance(a.Origin, a.Rotation)).ToArray();
+        if (hazards.Length == 0)
+            return null;
+        // The small central marker indicates direction; find a full destination circle clear of the observed wave.
+        for (var radius = 2f; radius <= 12f; radius += 0.5f)
+        {
+            var spot = Module.Center + currentDirection * radius;
+            if (hazards.All(h => h.Distance(spot) > 1f))
+                return spot;
+        }
+        return null;
+    }
+
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {
         if (spell.Action.ID == (uint)AID.ChaoticFloodAOEDisplay)
@@ -169,7 +193,10 @@ sealed class ChaoticFlood(BossModule module) : Components.SimpleAOEs(module, (ui
             return;
         }
 
-        Arena.ZoneCircleOutline(Module.Center + currentDirection * 2.0f, 1.0f, Colors.Safe, 2.0f);
+        if (!Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+            Arena.ZoneCircleOutline(Module.Center + currentDirection * 2.0f, 1.0f, Colors.Safe, 2.0f);
+        else if (SafeSpot(pcSlot, pc) is { } spot)
+            Arena.ZoneCircleOutline(spot, 1f, Colors.Safe, 2f);
 
         if (NumCasts <= 4)
         {
@@ -227,6 +254,14 @@ sealed class ChaoticFlood(BossModule module) : Components.SimpleAOEs(module, (ui
 sealed class ChaoticFloodStack(BossModule module) : Components.GenericStackSpread(module)
 {
     public int NumCasts = 0;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        var firstZone = hints.ForbiddenZones.Count;
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (Module.FindComponent<ChaoticFlood>()?.SafeSpot(slot, actor) != null)
+            hints.ForbiddenZones.RemoveRange(firstZone, hints.ForbiddenZones.Count - firstZone);
+    }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {
@@ -292,6 +327,11 @@ sealed class MaddeningOrchestra(DMU module) : Components.GenericBaitAway(module,
             {
                 firstWave = true;
             }
+            if (NumCasts >= 8)
+            {
+                active = false;
+                CurrentBaits.Clear();
+            }
         }
     }
 
@@ -340,6 +380,41 @@ sealed class MaddeningOrchestra(DMU module) : Components.GenericBaitAway(module,
                 hints.Add("Bait!");
             }
         }
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (!active || NumCasts >= 8 || !Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+            return;
+        // Yarn diagrams 224-225: fixed role scatter, then the three unhit players bait closer.
+        WDir offset = assignment switch
+        {
+            PartyRolesConfig.Assignment.MT => new(-4, -10),
+            PartyRolesConfig.Assignment.OT => new(4, -10),
+            PartyRolesConfig.Assignment.H1 => new(-10, 4),
+            PartyRolesConfig.Assignment.H2 => new(10, 4),
+            PartyRolesConfig.Assignment.M1 => new(-4, 10),
+            PartyRolesConfig.Assignment.M2 => new(4, 10),
+            PartyRolesConfig.Assignment.R1 => new(-10, -4),
+            PartyRolesConfig.Assignment.R2 => new(10, -4),
+            _ => default
+        };
+        if (offset == default)
+            return;
+        if (firstWave)
+        {
+            // Do not guess the random first-wave membership while status updates are incomplete.
+            var eligible = 0;
+            foreach (var (memberSlot, member) in Raid.WithSlot(true, true, true))
+                if (member.Role != Role.Tank && magicVulnerability[memberSlot] <= WorldState.CurrentTime)
+                    ++eligible;
+            if (eligible != 3)
+                return;
+            offset = actor.Role == Role.Tank ? new(0, -10)
+                : offset / offset.Length() * (magicVulnerability[slot] > WorldState.CurrentTime ? 16f : 8f);
+        }
+        hints.AddForbiddenZone(new SDInvertedCircle(Module.Center + offset, 0.6f));
     }
 }
 
@@ -401,18 +476,69 @@ sealed class ChaoticFlareTB(DMU module) : Components.GenericBaitStack(module, (u
             }
         }
     }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (!active)
+            return;
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy && assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT)
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center + new WDir(0, -10), 0.6f));
+    }
 }
 
 sealed class ChaoticHolyFlareDiffusion(BossModule module) : Components.GenericBaitAway(module, centerAtTarget: true, onlyShowOutlines: true)
 {
+    private static bool InvulnerableUntil(Actor actor, DateTime activation)
+        => actor.Statuses.Any(s => s.ID is 82 or 409 or 810 or 811 or 1836 or 3255 && s.ExpireAt >= activation);
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (!Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            return;
+        }
+        var flare = CurrentBaits.FirstOrDefault(b => b.Shape is AOEShapeCircle { Radius: 25f });
+        var holy = CurrentBaits.FirstOrDefault(b => b.Shape is AOEShapeCircle { Radius: 6f });
+        var hasPair = flare.Target != null && holy.Target != null;
+        var overlapActivation = !hasPair || holy.Activation >= flare.Activation ? holy.Activation : flare.Activation;
+        var protectedHoly = hasPair && actor == holy.Target && InvulnerableUntil(actor, overlapActivation);
+        foreach (var bait in CurrentBaits)
+        {
+            if (bait.Target == actor || protectedHoly && bait.Target == flare.Target)
+                continue;
+            hints.AddForbiddenZone(bait.Shape, bait.Target.Position, bait.Rotation, bait.Activation);
+        }
+        if (!hasPair || assignment == PartyRolesConfig.Assignment.Unassigned)
+            return;
+        // Yarn diagram 226: status holders decide positions, including the tank swap.
+        WDir? offset = actor == flare.Target ? new(0, -19)
+            : actor == holy.Target ? protectedHoly ? new WDir(0, -10) : null
+            : actor.Role != Role.Tank ? new WDir(0, 15) : null;
+        if (offset is { } position)
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center + position, 0.6f));
+    }
+
+    public override void AddHints(int slot, Actor actor, TextHints hints)
+    {
+        base.AddHints(slot, actor, hints);
+        var activation = CurrentBaits.Count > 0 ? CurrentBaits.Max(b => b.Activation) : default;
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy
+            && CurrentBaits.Any(b => b.Target == actor && b.Shape is AOEShapeCircle { Radius: 6f } && !InvulnerableUntil(actor, activation)))
+            hints.Add("Swap and use tank invulnerability for Holy overlapping Flare");
+    }
+
     public override void OnStatusGain(Actor actor, ref ActorStatus status)
     {
         if (status.ID is var id && id == (uint)SID.SurpriseHoly)
         {
+            CurrentBaits.RemoveAll(b => b.Target == actor);
             CurrentBaits.Add(new(actor, actor, new AOEShapeCircle(6.0f), status.ExpireAt));
         }
         else if (id == (uint)SID.SurpriseFlare)
         {
+            CurrentBaits.RemoveAll(b => b.Target == actor);
             CurrentBaits.Add(new(actor, actor, new AOEShapeCircle(25.0f), status.ExpireAt));
         }
     }
@@ -484,7 +610,11 @@ sealed class Celestriad(BossModule module) : Components.GenericTowers(module)
         {
             if (state == (uint)Animations.TowerGlow)
             {
-                Towers.Add(new(actor.Position, 3.0f, 2, 2, actorID: actor.InstanceID));
+                // A reused actor can glow for the next wave just before its previous explosion.
+                if (Towers.Any(t => t.ActorID == actor.InstanceID && t.Activation > WorldState.FutureTime(1)))
+                    return;
+                // cactbot e79ea7f1: glow at 1455.7, damage at 1461.8; subsequent waves are six seconds apart.
+                Towers.Add(new(actor.Position, 3.0f, 2, 2, activation: WorldState.FutureTime(6.1f), actorID: actor.InstanceID));
 
                 if (Towers.Count >= 4)
                 {
@@ -504,8 +634,12 @@ sealed class Celestriad(BossModule module) : Components.GenericTowers(module)
 
             if (state == (uint)Animations.TowerExplosion)
             {
-                ++NumCasts;
-                Towers.RemoveAll(p => p.ActorID == actor.InstanceID);
+                var index = Towers.FindIndex(t => t.ActorID == actor.InstanceID && t.Activation <= WorldState.FutureTime(1));
+                if (index >= 0)
+                {
+                    Towers.RemoveAt(index);
+                    ++NumCasts;
+                }
             }
         }
     }
@@ -559,7 +693,7 @@ sealed class Celestriad(BossModule module) : Components.GenericTowers(module)
     // So every wave of towers is just +1 to their element, and they will end back at their original element
     public override void Update()
     {
-        if (towerOrder.Contains(Elements.NONE) || Towers.Count == 0)
+        if (!AssignmentsReady)
         {
             return;
         }
@@ -623,6 +757,15 @@ sealed class Celestriad(BossModule module) : Components.GenericTowers(module)
             Towers[i] = tower;
         }
     }
+
+    // Glow/explosion events interleave between waves; do not route using a partial wave or guessed debuff.
+    private bool AssignmentsReady => !towerOrder.Contains(Elements.NONE) && !debuffs.Contains(Elements.NONE) && Towers.Count == 4 && NumCasts % 4 == 0;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (AssignmentsReady)
+            base.AddAIHints(slot, actor, assignment, hints);
+    }
 }
 
 sealed class CatastrophicChoice(BossModule module) : Components.GenericAOEs(module)
@@ -677,7 +820,6 @@ sealed class StrayApocalypse(BossModule module) : Components.Exaflare(module, 6f
         if (spell.Action.ID is ((uint)AID.StrayApocalypseExaFlareCast) or
             ((uint)AID.StrayApocalypseExaFlare))
         {
-            ++NumCasts;
             var count = Lines.Count;
             var pos = caster.Position;
 
@@ -686,6 +828,7 @@ sealed class StrayApocalypse(BossModule module) : Components.Exaflare(module, 6f
                 var line = Lines[i];
                 if (line.Next.AlmostEqual(pos, 1f))
                 {
+                    ++NumCasts;
                     AdvanceLine(line, pos);
                     if (line.ExplosionsLeft == 0)
                     {
@@ -702,7 +845,7 @@ sealed class StrayApocalypse(BossModule module) : Components.Exaflare(module, 6f
     {
         currentAOEs.Clear();
 
-        var exaFlares = Lines.Take(4).ToList();
+        var exaFlares = Lines;
         for (var i = 0; i < exaFlares.Count; ++i)
         {
             var line = Lines[i];
@@ -743,7 +886,7 @@ sealed class StrayEntropy(BossModule module) : Components.UniformStackSpread(mod
     }
 }
 
-sealed class P5ForsakenRaidWide(BossModule module) : Components.RaidwideCast(module, (uint)AID.ForsakenCast);
+sealed class P5ForsakenRaidWide(BossModule module) : Components.RaidwideCasts(module, [(uint)AID.ForsakenCast, (uint)AID._Ability_Forsaken2]);
 
 // TODO update to use MapEffects maybe?
 sealed class P5ForsakenGround(BossModule module) : Components.SimpleAOEs(module, (uint)AID.ForsakenGround, new AOEShapeCircle(8.0f))
@@ -782,49 +925,8 @@ sealed class P5ForsakenGround(BossModule module) : Components.SimpleAOEs(module,
     }
 }
 
-sealed class P5ForsakenBait(DMU module) : Components.GenericBaitProximity(module)
-{
-    private bool active = true;
-    private readonly Actor boss = module.KefkaP5()!;
-
-    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
-    {
-        if (spell.Action.ID == (uint)AID.ForsakenAOEBait)
-        {
-            active = true;
-        }
-    }
-
-    public override void OnEventCast(Actor caster, ActorCastEvent spell)
-    {
-        if (spell.Action.ID == (uint)AID.ForsakenAOEBait)
-        {
-            CurrentBaits.Clear();
-            NumCasts++;
-        }
-    }
-
-    // Says baited onto an inter/card closest to a random player
-    public override void Update()
-    {
-        if (active)
-        {
-            OnlyShowOutlines = false;
-            return;
-        }
-
-        CurrentBaits.Clear();
-        OnlyShowOutlines = true;
-
-        var target = Raid.WithoutSlot().SortedByRange(boss.Position).Closest(boss.Position);
-        if (target == null)
-        {
-            return;
-        }
-
-        CurrentBaits.Add(new(target.Position, new AOEShapeCircle(8.0f)));
-    }
-}
+// The random bait target is unknown until the helper cast locks its ground location.
+sealed class P5ForsakenBait(BossModule module) : Components.SimpleAOEs(module, (uint)AID.ForsakenAOEBait, 8f);
 
 sealed class P5ForsakenStack(BossModule module) : Components.StackTogether(module, (uint)IconID.StackShare, 5.0f, 6.0f);
 
@@ -832,10 +934,3 @@ sealed class P5ForsakenStack(BossModule module) : Components.StackTogether(modul
     ForsakenAOEBait = 47928, // Helper->self, 5.0s cast, range 8 circle - Bait puddle
     ForsakenBonds = 47929, // Helper->players, no cast, range 6 circle - Stack
  */
-
-// TODO
-//  6. Make Forsaken
-//  7. Fix timeline upon entering P5
-
-// TODO add safe spots to MaddeningOrchestra, add config option of 1-6 (somehow don't include tanks or set them to 0), 0 players will not be included
-//  Lowest number is left, highest number is right, last number remaining is middle

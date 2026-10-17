@@ -1118,6 +1118,16 @@ sealed class Replication1Guidance : BossComponent
     // DRAW
     // ------------------------------------------------------------
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (_assignments.Length != 8 || _assignments[slot] == PartyRolesConfig.Assignment.Unassigned)
+            return;
+
+        var position = DebuffsAssigned() ? FinalPosition(slot, actor) : InitialPosition(_assignments[slot]);
+        if (position is { } destination)
+            hints.GoalZones.Add(AIHints.GoalSingleTarget(destination, 1.1f));
+    }
+
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
         if (_assignments.Length != 8)

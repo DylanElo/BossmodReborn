@@ -336,6 +336,7 @@ sealed class AssaultFloorPredictor(BossModule module) : GenericAOEs(module)
 sealed class AssaultEvolvedSword(BossModule module) : GenericAOEs(module)
 {
     private bool _active;
+    private DateTime _activation;
     internal bool Active => _active;
     private WPos _origin;
     internal WPos Origin => _origin;
@@ -344,6 +345,12 @@ sealed class AssaultEvolvedSword(BossModule module) : GenericAOEs(module)
 
     // Reborn-native shapes
     private static readonly AOEShapeRect Line = new(60f, 2f);
+
+    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
+    {
+        if (spell.Action.ID == (uint)AID.AssaultEvolved_SwordCross)
+            _activation = Module.CastFinishAt(spell);
+    }
 
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
     {
@@ -379,6 +386,7 @@ sealed class AssaultEvolvedSword(BossModule module) : GenericAOEs(module)
     private void Clear()
     {
         _active = false;
+        _activation = default;
         _aoes.Clear();
         _healers.Clear();
     }
@@ -406,6 +414,31 @@ sealed class AssaultEvolvedSword(BossModule module) : GenericAOEs(module)
             return;
 
         hints.Add("Stack in light parties");
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (!_active)
+            return;
+        if (assignment == PartyRolesConfig.Assignment.Unassigned)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            return;
+        }
+        var roles = Service.Config.Get<PartyRolesConfig>();
+        var healerRole = assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.R1 ? PartyRolesConfig.Assignment.H1 : PartyRolesConfig.Assignment.H2;
+        foreach (var healer in _healers)
+        {
+            var shape = Line.Distance(_origin, Angle.FromDirection(healer.Position - _origin));
+            var healerSlot = Raid.FindSlot(healer.InstanceID);
+            if (healerSlot >= 0 && roles[Raid.Members[healerSlot].ContentId] == healerRole)
+            {
+                if (_activation != default)
+                    hints.AddForbiddenZone(new SDInvertedUnion([shape]), _activation);
+            }
+            else
+                hints.AddForbiddenZone(shape, _activation);
+        }
     }
 }
 
@@ -540,6 +573,15 @@ sealed class AssaultEvolvedScythe(BossModule module) : GenericAOEs(module)
 
         hints.Add("Spread cones, stay in donut");
     }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (!_active)
+            return;
+        foreach (var other in _players)
+            if (other != actor)
+                hints.AddForbiddenZone(PlayerCone.Distance(_origin, Angle.FromDirection(other.Position - _origin)));
+    }
 }
 
 sealed class AssaultWeaponSafeSpots(BossModule module) : BossComponent(module)
@@ -613,23 +655,40 @@ sealed class AssaultWeaponSafeSpots(BossModule module) : BossComponent(module)
 
     public override void DrawArenaForeground(int slot, Actor pc)
     {
-        if (!_initialized || pc == null || _timeline == null)
-            return;
+        if (SafeSpot(slot) is WPos spot)
+        {
+            Arena.ZoneCircleOutline(spot, Radius, Colors.Safe);
+            Arena.AddLine(pc.Position, spot, Colors.Safe);
+        }
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (SafeSpot(slot) is WPos spot)
+            hints.GoalZones.Add(AIHints.GoalProximity(spot, Radius, 10f));
+    }
+
+    private WPos? SafeSpot(int slot)
+    {
+        if (!_initialized || _timeline == null)
+            return null;
 
         var seq = _timeline.Sequence;
         if ((uint)_activeIndex >= (uint)seq.Length)
-            return;
+            return null;
 
         var assignments = _roles.AssignmentsPerSlot(WorldState.Party);
         if (assignments.Length == 0 || (uint)slot >= (uint)assignments.Length)
-            return;
+            return null;
 
         var entry = seq[_activeIndex];
         var actor = entry.Actor;
         if (actor == null)
-            return;
+            return null;
 
         var role = assignments[slot];
+        if (role == PartyRolesConfig.Assignment.Unassigned)
+            return null;
 
         var pos = actor.Position;
         var rot = actor.Rotation;
@@ -642,11 +701,7 @@ sealed class AssaultWeaponSafeSpots(BossModule module) : BossComponent(module)
             _ => default
         };
 
-        if (spot == default)
-            return;
-
-        Arena.ZoneCircleOutline(spot, Radius, Colors.Safe);
-        Arena.AddLine(pc.Position, spot, Colors.Safe);
+        return spot != default ? spot : null;
     }
 
     private static WPos SwordSpot(PartyRolesConfig.Assignment role, WPos pos, Angle rot)

@@ -69,22 +69,24 @@ sealed class IdyllicDreamPowerGusherSnakingKick(BossModule module) : Components.
     public bool Risky;
     public bool WatchTeleport;
 
-    public void Reset() => NumCasts = 0;
+    public void Reset(double delay)
+    {
+        NumCasts = 0;
+        var activation = WorldState.FutureTime(delay);
+        for (var i = 0; i < _predicted.Count; ++i)
+            _predicted[i] = _predicted[i] with { Activation = activation };
+        for (var i = 0; i < _portaled.Count; ++i)
+            _portaled[i] = _portaled[i] with { Activation = activation };
+    }
 
     public override ReadOnlySpan<AOEInstance> ActiveAOEs(int slot, Actor actor)
     {
         if (!Visible || _predicted.Count == 0)
             return default;
 
-        if (Risky)
-        {
-            var span = CollectionsMarshal.AsSpan(_predicted);
-            for (var i = 0; i < span.Length; ++i)
-            {
-                if (!span[i].Risky)
-                    span[i] = span[i] with { Risky = true };
-            }
-        }
+        var span = CollectionsMarshal.AsSpan(_predicted);
+        for (var i = 0; i < span.Length; ++i)
+            span[i].Risky = Risky;
         return CollectionsMarshal.AsSpan(_predicted);
     }
 
@@ -118,7 +120,10 @@ sealed class IdyllicDreamPowerGusherSnakingKick(BossModule module) : Components.
             Visible = false;
 
             if (WatchTeleport)
-                _predicted.Clear();
+            {
+                _predicted.RemoveAll(aoe => aoe.Origin.AlmostEqual(caster.Position, 1f));
+                Visible = _predicted.Count > 0;
+            }
         }
 
         if (!WatchTeleport)
@@ -239,8 +244,10 @@ sealed class IdyllicDreamWurmStackSpread : Components.UniformStackSpread
         }
         if (aid is (uint)AID.IdyllicDreamManaBurst or (uint)AID.IdyllicDreamHeavySlam)
         {
-            if (Stored.Count > 0)
-                Stored.RemoveAt(0);
+            var shape = aid == (uint)AID.IdyllicDreamManaBurst ? CloneShape.Spread : CloneShape.Stack;
+            var index = Stored.FindIndex(entry => entry.Shape == shape);
+            if (index >= 0)
+                Stored.RemoveAt(index);
         }
     }
 }
@@ -257,21 +264,16 @@ sealed class IdyllicDreamManaBurstPlayer(BossModule module) : Components.Generic
         if (count == 0)
             return default;
 
-        if (Risky)
-        {
-            var span = CollectionsMarshal.AsSpan(_predicted);
-            for (var i = 0; i < span.Length; ++i)
-            {
-                if (!span[i].Risky)
-                    span[i] = span[i] with { Risky = true };
-            }
-        }
+        var span = CollectionsMarshal.AsSpan(_predicted);
+        for (var i = 0; i < span.Length; ++i)
+            span[i].Risky = Risky;
 
         return CollectionsMarshal.AsSpan(_predicted);
     }
 
     public void Predict(int spawnOrder)
     {
+        Risky = false;
         var staging = Module.FindComponent<IdyllicDreamStaging>();
         if (staging == null)
         {
@@ -322,11 +324,7 @@ sealed class IdyllicDreamManaBurstPlayer(BossModule module) : Components.Generic
         if (spell.Action.ID != (uint)AID.ManaBurstReplay)
             return;
 
-        var target = Module.WorldState.Actors.Find(spell.MainTargetID);
-        if (target == null)
-            return;
-
-        var pos = target.Position;
+        var pos = caster.Position;
 
         for (var i = _predicted.Count - 1; i >= 0; --i)
         {

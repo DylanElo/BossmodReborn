@@ -123,6 +123,18 @@ sealed class FlameFloater(BossModule module) : Components.GenericAOEs(module)
         }
     }
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        // Only the current tether moves to its bait: future baiters must not cross the active dash.
+        if (!_config.EnableStrategyAI || !Active || _bossStartPos == default || _voidSpawned >= _baitTargets.Length || _baitTargets[_voidSpawned] != slot)
+            return;
+
+        var destination = GetBaitPosition(_voidSpawned);
+        hints.AddForbiddenZone(new SDCircle(Module.PrimaryActor.Position, _tetherDist));
+        hints.GoalZones.Add(AIHints.GoalProximity(destination, _baitRadius, 10f));
+    }
+
     public override void OnActorCreated(Actor actor)
     {
         if (actor.OID == (uint)OID.PuddleFlameFloater)

@@ -3,6 +3,8 @@
 [ConfigDisplay(Order = 0x400, Parent = typeof(DawntrailConfig))]
 public sealed class DMUConfig : ConfigNode
 {
+    [PropertyDisplay("Yarn Flash / Piren (JP): melee inner, healer-first priority, wind eight-player tank LB")]
+    public bool YarnPirenStrategy = false;
 
     public enum P1GravenImage2Strategy
     {

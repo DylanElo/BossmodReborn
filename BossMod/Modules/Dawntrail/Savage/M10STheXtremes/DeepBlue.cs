@@ -192,6 +192,25 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
 
     private void DrawPlayerPosition(int pcSlot, Actor pc)
     {
+        if (PlayerPosition(pcSlot) is { } destination)
+            Arena.ZoneCircleOutline(destination.position, destination.radius, pc.Position.InCircle(destination.position, destination.radius) ? Colors.Safe : Colors.Danger);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (_config.EnableStrategyAI && PlayerPosition(slot) is { } destination)
+            foreach (var bait in CurrentBaits)
+                if (bait.Target == actor)
+                {
+                    hints.GoalZones.Add(AIHints.GoalProximity(destination.position, destination.radius, 10f));
+                    hints.AddForbiddenZone(new SDInvertedCircle(destination.position, destination.radius), bait.Activation);
+                    break;
+                }
+    }
+
+    private (WPos position, float radius)? PlayerPosition(int pcSlot)
+    {
         // config assignment resolve
         // slot = player slot in raid
         // group = index of option in config (eg. N = 0, NE = 1, etc)
@@ -199,18 +218,18 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
         // don't use resolve since it returns empty unless everyone's assigned
 
         if (CurrentState == State.None)
-            return;
+            return null;
 
         if (!_config.WaterAlleyOopAssignment.Validate())
-            return;
+            return null;
 
         var assignment = _partyConfig[Raid.Members[pcSlot].ContentId];
         if (assignment == PartyRolesConfig.Assignment.Unassigned)
-            return;
+            return null;
 
         var enemies = Module.Enemies((uint)OID.DeepBlue);
         if (enemies.Count == 0)
-            return;
+            return null;
 
         var deepblue = enemies[0];
         var position = deepblue.Position;
@@ -239,8 +258,7 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
         {
             var targetRot = rotation - group * 45f.Degrees();
             var targetPos = deepblue.Position + targetRot.ToDirection() * (deepblue.HitboxRadius + 1.5f);
-            var targetSd = new SDCircle(targetPos, radius);
-            Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+            return (targetPos, radius);
         }
         else if (CurrentState == State.Snaking)
         {
@@ -252,7 +270,7 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
             if (waters.Any())
             {
                 if (!waters[pcSlot])
-                    return;
+                    return null;
             }
 
             var middle = new WPos(position.X, 100f);
@@ -286,8 +304,7 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
 
             // shift a little so circle isn't right on arena bound
             targetPos += new WDir(1f, 0f);
-            var targetSd = new SDCircle(targetPos, radius);
-            Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger, 2f);
+            return (targetPos, radius);
         }
         else if (CurrentState == State.SplitArena)
         {
@@ -332,8 +349,7 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
                 };
             }
 
-            var targetSd = new SDCircle(targetPos, radius);
-            Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+            return (targetPos, radius);
         }
         else
         {
@@ -341,8 +357,7 @@ sealed class AlleyOopWater(BossModule module) : Components.GenericBaitAway(modul
             var north = 180f.Degrees();
             var targetRot = north - group * 45f.Degrees();
             var targetPos = Arena.Center + targetRot.ToDirection() * (group % 2 == 0 ? 18f : 25.5f);
-            var targetSd = new SDCircle(targetPos, radius);
-            Arena.ZoneCircleOutline(targetPos, radius, targetSd.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
+            return (targetPos, radius);
         }
     }
 }

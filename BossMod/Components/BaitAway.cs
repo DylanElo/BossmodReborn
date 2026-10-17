@@ -282,6 +282,8 @@ public class GenericBaitAway(BossModule module, uint aid = default, bool alwaysD
             {
                 continue;
             }
+            if (a == bait.Source && bait.Shape is AOEShapeCone or AOEShapeRect)
+                continue; // The emitter is not a victim of its own aimed cone/line.
 
             var radius = a.Type == ActorType.Pet ? a.HitboxRadius : 0f;
 

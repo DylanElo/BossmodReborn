@@ -348,22 +348,42 @@ sealed class AntiLight(BossModule module) : BossComponent(module)
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
+        if (Sides(pcSlot) is not { } sides)
+            return;
+        var shape = new AOEShapeRect(47f, 10.5f);
+        shape.Draw(Arena, sides.correct.Position, sides.correct.Rotation, Colors.SafeFromAOE);
+        shape.Draw(Arena, sides.wrong.Position, sides.wrong.Rotation, Colors.AOE);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (Sides(slot) is not { } sides || sides.correct.CastInfo is not { } cast)
+            return;
+        var shape = new AOEShapeRect(47f, 10.5f);
+        var deadline = Module.CastFinishAt(cast);
+        // This beam is a required hit: death/field and wound color decide which half is safe.
+        hints.AddForbiddenZone(new SDInvertedUnion([shape.Distance(sides.correct.Position, sides.correct.Rotation)]), deadline);
+        hints.AddForbiddenZone(shape, sides.wrong.Position, sides.wrong.Rotation, deadline);
+    }
+
+    private (Actor correct, Actor wrong)? Sides(int pcSlot)
+    {
         if (grandCrossOrder == null || whiteAntiLight == null || blackAntiLight == null || tellingTruth == null || spellID == null)
         {
-            return;
+            return null;
         }
 
         var buffs = grandCrossOrder.GetCurrentPlayerBuffs(pcSlot, 2); // Sets are 0, 1, 2, and AntiLight is always the final set
         if (buffs == null)
         {
-            return;
+            return null;
         }
 
         // TODO This should never happen - most likely can be removed, as buffs will always be there by the time casters are set
         if (!HasBuff(buffs, (uint)SID.BeyondDeath) && !HasBuff(buffs, (uint)SID.BeyondDeath1) &&
             !HasBuff(buffs, (uint)SID.AllaganField))
         {
-            return;
+            return null;
         }
 
         Actor? correctSide = null;
@@ -385,7 +405,7 @@ sealed class AntiLight(BossModule module) : BossComponent(module)
 
         if (correctSide == null || wrongSide == null)
         {
-            return;
+            return null;
         }
 
         // Fake = swap
@@ -394,9 +414,7 @@ sealed class AntiLight(BossModule module) : BossComponent(module)
             (correctSide, wrongSide) = (wrongSide, correctSide);
         }
 
-        var shape = new AOEShapeRect(47.0f, 10.5f);
-        shape.Draw(Arena, correctSide.Position, correctSide.Rotation, Colors.SafeFromAOE);
-        shape.Draw(Arena, wrongSide.Position, wrongSide.Rotation, Colors.AOE);
+        return (correctSide, wrongSide);
     }
 
     private bool HasBuff(List<(uint buff, DateTime expireAt)> buffs, uint status)
@@ -409,6 +427,8 @@ sealed class AntiLight(BossModule module) : BossComponent(module)
 sealed class ForkedWater(BossModule module) : Components.UniformStackSpread(module, 8.0f, 8.0f, 3, 3)
 {
     private readonly GrandCrossOrder? grandCrossOrder = module.FindComponent<GrandCrossOrder>();
+    private readonly DMUConfig config = Service.Config.Get<DMUConfig>();
+    public bool FirstSet;
     public int NumCasts = 0; // 4 casts will always go off, better to watch this to know if the aoes are active or not
     public bool active = true; // Used to hide everything until it need to be shown if overlap with other mechancis
 
@@ -483,37 +503,52 @@ sealed class ForkedWater(BossModule module) : Components.UniformStackSpread(modu
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
         if (active)
-        {
             base.DrawArenaForeground(pcSlot, pc);
-        }
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
 
-        // Stacks + nothing players
-        if (Stacks.Any(player => player.Target == pc) || !Spreads.Any(player => player.Target == pc))
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        var firstZone = hints.ForbiddenZones.Count;
+        if (active)
+            base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned || !active || NumCasts >= 4 || Stacks.Count + Spreads.Count == 0)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
         {
-            if (pc.Class.IsSupport())
-            {
-                Arena.ZoneCircleOutline(new WPos(100.0f, 88.0f), 1.0f, active ? Colors.Safe : Colors.Danger, 2.0f);
-            }
-
-            if (pc.Class.IsDD())
-            {
-                Arena.ZoneCircleOutline(new WPos(100.0f, 112.0f), 1.0f, active ? Colors.Safe : Colors.Danger, 2.0f);
-            }
-        }
-
-        // Spread players
-        if (Spreads.Any(player => player.Target == pc))
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count == 0)
+            return;
+        // The assigned group moves together; generic attraction to its old location would veto that move.
+        hints.ForbiddenZones.RemoveRange(firstZone, hints.ForbiddenZones.Count - firstZone);
+        foreach (var spread in ActiveSpreads)
         {
-            if (pc.Class.IsSupport())
-            {
-                Arena.ZoneCircleOutline(new WPos(88.0f, 100.0f), 1.0f, active ? Colors.Safe : Colors.Danger, 2.0f);
-            }
-
-            if (pc.Class.IsDD())
-            {
-                Arena.ZoneCircleOutline(new WPos(112.0f, 100.0f), 1.0f, active ? Colors.Safe : Colors.Danger, 2.0f);
-            }
+            if (spread.Target != actor)
+                hints.AddForbiddenZone(new SDCircle(spread.Target.Position, spread.Radius + ExtraAISpreadThreshold), spread.Activation);
+            else
+                foreach (var player in Raid.WithoutSlot(includeDead: IncludeDeadTargets))
+                    if (player != actor && !ActiveSpreads.Any(s => s.Target == player))
+                        hints.AddForbiddenZone(new SDCircle(player.Position, spread.Radius + ExtraAISpreadThreshold), spread.Activation);
         }
+        hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]));
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
+        WDir north = new(0f, -1f);
+        if (config.YarnPirenStrategy && FirstSet)
+        {
+            var neo = ((DMU)Module).NeoExdeath();
+            if (neo == null || neo.IsDeadOrDestroyed || (neo.Position - Arena.Center).LengthSq() < 1f)
+                return;
+            north = (neo.Position - Arena.Center).Normalized();
+        }
+        var spread = Spreads.Any(s => s.Target == pc);
+        var direction = spread ? (pc.Class.IsSupport() ? north.OrthoL() : north.OrthoR()) : (pc.Class.IsSupport() ? north : -north);
+        add(Arena.Center + direction * 12f, 1f, active ? Colors.Safe : Colors.Danger, 2f);
     }
 
     public override void AddHints(int slot, Actor actor, TextHints hints)
@@ -698,6 +733,26 @@ sealed class CursedShriek(BossModule module) : Components.GenericGaze(module)
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
         base.DrawArenaForeground(pcSlot, pc);
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned || pendingGazes.Count == 0)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
+        {
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]), pendingGazes.Min(g => g.expireAt));
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
 
         // Special case: If lightning safe spots is null it means we are on the 2nd gaze which are just north and south spots instead
         if (lightningSafeSpots == null)
@@ -706,25 +761,25 @@ sealed class CursedShriek(BossModule module) : Components.GenericGaze(module)
             // Support gaze player
             if (pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsSupport())
             {
-                Arena.ZoneCircleOutline(Module.Center - new WDir(0, 2.0f), 1f, Colors.Safe, 2f);
+                add(Module.Center - new WDir(0, 2.0f), 1f, Colors.Safe, 2f);
             }
 
             // DD gaze player
             if (pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsDD())
             {
-                Arena.ZoneCircleOutline(Module.Center - new WDir(0, -2.0f), 1f, Colors.Safe, 2f);
+                add(Module.Center - new WDir(0, -2.0f), 1f, Colors.Safe, 2f);
             }
 
             // Support players
             if (!pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsSupport())
             {
-                Arena.ZoneCircleOutline(Module.Center - new WDir(0, 6.0f), 1f, Colors.Safe, 2f);
+                add(Module.Center - new WDir(0, 6.0f), 1f, Colors.Safe, 2f);
             }
 
             // DD players
             if (!pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsDD())
             {
-                Arena.ZoneCircleOutline(Module.Center - new WDir(0, -6.0f), 1f, Colors.Safe, 2f);
+                add(Module.Center - new WDir(0, -6.0f), 1f, Colors.Safe, 2f);
             }
 
             return;
@@ -761,28 +816,31 @@ sealed class CursedShriek(BossModule module) : Components.GenericGaze(module)
                 safeSpot = edgeCenter + forward * (Module.Center - edgeCenter).Dot(forward) + forward.OrthoL();
             }
 
+            if (safeSpot == default)
+                continue;
+
             // Support gaze player
             if (pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsSupport())
             {
-                Arena.ZoneCircleOutline(safeSpot - forward * 2f, 1f, Colors.Safe, 2f);
+                add(safeSpot - forward * 2f, 1f, Colors.Safe, 2f);
             }
 
             // DD gaze player
             if (pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsDD())
             {
-                Arena.ZoneCircleOutline(safeSpot + forward * 2f, 1f, Colors.Safe, 2f);
+                add(safeSpot + forward * 2f, 1f, Colors.Safe, 2f);
             }
 
             // Support players
             if (!pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsSupport())
             {
-                Arena.ZoneCircleOutline(safeSpot - forward * 6f, 1f, Colors.Safe, 2f);
+                add(safeSpot - forward * 6f, 1f, Colors.Safe, 2f);
             }
 
             // DD players
             if (!pendingGazes.Any(eye => eye.player == pc) && pc.Class.IsDD())
             {
-                Arena.ZoneCircleOutline(safeSpot + forward * 6f, 1f, Colors.Safe, 2f);
+                add(safeSpot + forward * 6f, 1f, Colors.Safe, 2f);
             }
         }
     }
@@ -824,6 +882,13 @@ sealed class Inferno(BossModule module) : Components.GenericBaitProximity(module
 {
     private readonly TsunamiInfernoOrder? tsunamiInfernoOrder = module.FindComponent<TsunamiInfernoOrder>();
     public bool active = false;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (!active && CurrentBaits.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center, 1f), CurrentBaits.Min(b => b.Activation));
+    }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {
@@ -918,6 +983,13 @@ sealed class Tsunami(BossModule module) : Components.GenericBaitProximity(module
 {
     private readonly TsunamiInfernoOrder? tsunamiInfernoOrder = module.FindComponent<TsunamiInfernoOrder>();
     public bool active = false;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (!active && CurrentBaits.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center, 1f), CurrentBaits.Min(b => b.Activation));
+    }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {

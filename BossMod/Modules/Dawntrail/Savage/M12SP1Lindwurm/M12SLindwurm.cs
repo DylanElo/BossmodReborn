@@ -2,7 +2,47 @@ namespace BossMod.Dawntrail.Savage.M12SLindwurm;
 
 sealed class Slaughtershed0(BossModule module) : Components.RaidwideCast(module, (uint)AID.Slaughtershed0);
 sealed class unk_46194(BossModule module) : Components.RaidwideCast(module, (uint)AID.unk_46194);
-sealed class RavenousReach1(BossModule module) : Components.SimpleAOEs(module, (uint)AID.RavenousReach1, new AOEShapeCone(35f, 60f.Degrees()));
+sealed class RavenousReach1(BossModule module) : Components.SimpleAOEs(module, (uint)AID.RavenousReach1, new AOEShapeCone(35f, 60f.Degrees()))
+{
+    public override void AddHints(int slot, Actor actor, TextHints hints)
+    {
+        if (actor.FindStatus((uint)SID.RottingFlesh) == null)
+        {
+            base.AddHints(slot, actor, hints);
+            return;
+        }
+        var inCone = false;
+        foreach (ref readonly var aoe in ActiveAOEs(slot, actor))
+            inCone |= aoe.Check(actor.Position);
+        hints.Add("Take cone to cleanse Rotting Flesh!", !inCone);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (actor.FindStatus((uint)SID.RottingFlesh) == null)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            return;
+        }
+
+        // Rotting Flesh is cleansed by deliberately taking a cone, with room for each player's cleanse explosion.
+        var aoes = ActiveAOEs(slot, actor);
+        if (aoes.Length == 0)
+            return;
+        List<ShapeDistance> cones = [];
+        var activation = aoes[0].Activation;
+        foreach (ref readonly var aoe in aoes)
+        {
+            cones.Add(aoe.Shape.Distance(aoe.Origin, aoe.Rotation));
+            if (aoe.Activation < activation)
+                activation = aoe.Activation;
+        }
+        hints.AddForbiddenZone(new SDInvertedUnion([.. cones]), activation);
+        foreach (var other in Raid.WithoutSlot(false, true, true))
+            if (other != actor)
+                hints.AddForbiddenZone(new SDCircle(other.Position, 6f), activation);
+    }
+}
 sealed class PhagocyteSpotlight0(BossModule module) : Components.SimpleAOEs(module, (uint)AID.PhagocyteSpotlight0, 5f);
 sealed class GrandEntrance0(BossModule module) : Components.SimpleAOEs(module, (uint)AID.GrandEntrance0, 2f);
 sealed class GrandEntrance1(BossModule module) : Components.SimpleAOEs(module, (uint)AID.GrandEntrance1, 2f);
@@ -45,6 +85,7 @@ sealed class Splattershed2(BossModule module) : Components.RaidwideCast(module, 
 sealed class unk_48028(BossModule module) : Components.RaidwideCast(module, (uint)AID.unk_48028);
 
 [ModuleInfo(BossModuleInfo.Maturity.Contributed,
+    PlanLevel = 100,
     Contributors = "SRP, additional enhancements by Topas",
     PrimaryActorOID = (uint)OID.Lindwurm1,
     GroupType = BossModuleInfo.GroupType.CFC,

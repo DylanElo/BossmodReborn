@@ -295,14 +295,14 @@ sealed class IdyllicDreamElementalMeteor(BossModule module) : Components.Generic
         westTowers.Sort(static (a, b) =>
         {
             var distA = Math.Abs(a.meteor.Actor.PosRot.X - 100);
-            var distB = Math.Abs(a.meteor.Actor.PosRot.X - 100);
+            var distB = Math.Abs(b.meteor.Actor.PosRot.X - 100);
             return distA.CompareTo(distB);
         });
 
         eastTowers.Sort(static (a, b) =>
         {
             var distA = Math.Abs(a.meteor.Actor.PosRot.X - 100);
-            var distB = Math.Abs(a.meteor.Actor.PosRot.X - 100);
+            var distB = Math.Abs(b.meteor.Actor.PosRot.X - 100);
             return distA.CompareTo(distB);
         });
 
@@ -1000,7 +1000,7 @@ sealed class IdyllicDreamLindwurmsDarkII(BossModule module) : Components.Generic
 
 sealed class IdyllicDreamDoom(BossModule module) : BossComponent(module)
 {
-    readonly BitMask _doomSlots;
+    BitMask _doomSlots;
 
     // --------------------------------------------------------
     // Status Tracking
@@ -1372,6 +1372,13 @@ sealed class LindwurmsPortent(BossModule module) : Components.GenericBaitAway(mo
             if (dist > 1.5f)
                 hints.Add($"Go to assigned position!");
         }
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (Service.Config.Get<M12S2LindwurmConfig>().ShowLindwurmsPortentHints && _assignedPositions.TryGetValue(slot, out var destination))
+            hints.GoalZones.Add(AIHints.GoalSingleTarget(destination, 1f));
     }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)

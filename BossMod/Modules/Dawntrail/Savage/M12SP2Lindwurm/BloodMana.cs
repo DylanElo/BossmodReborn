@@ -231,6 +231,16 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
     // Drawing
     // ============================
 
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (SwapDone || _playerAssignments[slot].L != Letter.B || _playerAssignments[slot].Expire <= WorldState.CurrentTime)
+            return;
+
+        foreach (var sphere in Spheres)
+            if (sphere.Order == 0 && sphere.Side != _closeSide && IsCloseShape(sphere.Shape))
+                hints.GoalZones.Add(AIHints.GoalSingleTarget(sphere.Actor.Position, 2f));
+    }
+
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
         var span = CollectionsMarshal.AsSpan(Spheres);

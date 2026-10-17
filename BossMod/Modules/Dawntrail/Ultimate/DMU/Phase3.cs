@@ -9,6 +9,32 @@ sealed class TheDecisiveBattle(BossModule module) : BossComponent(module)
     private Actor? chaosBoss;
     private Actor? exDeathBoss;
     private readonly PartyRolesConfig partyConfig = Service.Config.Get<PartyRolesConfig>();
+    private readonly DMUConfig dmuConfig = Service.Config.Get<DMUConfig>();
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (chaosBoss == null || exDeathBoss == null || partyConfig.SlotsPerAssignment(Raid).Length == 0)
+            return;
+        if (AssignedBoss(assignment) is { CastInfo: { } cast } boss)
+            hints.AddForbiddenZone(new SDInvertedCircle(boss.Position, 1.25f), Module.CastFinishAt(cast));
+    }
+
+    private Actor? AssignedBoss(PartyRolesConfig.Assignment assignment)
+    {
+        if (dmuConfig.YarnPirenStrategy)
+            return assignment switch
+            {
+                PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H2 or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 => chaosBoss,
+                PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2 => exDeathBoss,
+                _ => null
+            };
+        return assignment switch
+        {
+            PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 => chaosBoss,
+            PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H2 or PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2 => exDeathBoss,
+            _ => null
+        };
+    }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
@@ -42,17 +68,8 @@ sealed class TheDecisiveBattle(BossModule module) : BossComponent(module)
 
         var assignment = partyConfig[Raid.Members[pcSlot].ContentId];
 
-        if (assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or
-            PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2)
-        {
-            Arena.ZoneCircleOutline(chaosBoss.Position, 1.25f, Colors.Safe, 2.0f);
-        }
-
-        if (assignment is PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H2 or
-            PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2)
-        {
-            Arena.ZoneCircleOutline(exDeathBoss.Position, 1.25f, Colors.Safe, 2.0f);
-        }
+        if (AssignedBoss(assignment) is { } boss)
+            Arena.ZoneCircleOutline(boss.Position, 1.25f, Colors.Safe, 2.0f);
     }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
@@ -88,6 +105,27 @@ sealed class Crystals(BossModule module) : BossComponent(module)
 
     public Element nextElement = Element.None;
     public enum Element { None, Water, Fire, Wind }
+
+    public bool YarnPosition(PartyRolesConfig.Assignment assignment, out WPos position)
+    {
+        position = default;
+        var water = crystalsStored.FirstOrNull(c => c.actor.OID == (uint)OID.WaterP3);
+        var wind = crystalsStored.FirstOrNull(c => c.actor.OID == (uint)OID.WindP3);
+        if (water == null || wind == null || crystalsStored.Count != 3)
+            return false;
+        var toWater = (water.Value.actor.Position - Module.Center).Normalized();
+        var toWind = (wind.Value.actor.Position - Module.Center).Normalized();
+        // Yarn diagrams 134/136 keep these groups fixed for both elements; the crystal axes also handle mirroring.
+        position = assignment switch
+        {
+            PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.H2 => Module.Center + toWind * 7f,
+            PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 => Module.Center + toWind * 19.5f,
+            PartyRolesConfig.Assignment.R1 => Module.Center + toWater * 16f - toWind * 7f,
+            PartyRolesConfig.Assignment.R2 => Module.Center + toWater * 16f + toWind * 7f,
+            _ => default
+        };
+        return position != default;
+    }
 
     public override void OnStatusGain(Actor actor, ref ActorStatus status)
     {
@@ -246,6 +284,32 @@ sealed class WaterCrystal(BossModule module) : Components.GenericBaitProximity(m
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            if (crystals?.nextElement == Crystals.Element.Water && crystals.YarnPosition(assignment, out var position))
+                hints.AddForbiddenZone(new SDInvertedCircle(position, 1f), crystals.debuffPlayers.Where(p => p.debuff.ID == (uint)SID.DynamicFluid).Select(p => p.debuff.ExpireAt).DefaultIfEmpty(WorldState.CurrentTime).Min());
+            return; // Yarn intentionally takes the elemental hits; generic bait avoidance would prevent the prescribed route.
+        }
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned || crystals?.nextElement != Crystals.Element.Water)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
+        {
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]), default);
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
         var slots = partyConfig.SlotsPerAssignment(Raid);
         if (slots.Length == 0)
         {
@@ -258,29 +322,36 @@ sealed class WaterCrystal(BossModule module) : Components.GenericBaitProximity(m
             return;
         }
 
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            if (crystals.YarnPosition(assignment, out var position))
+                add(position, 1f, Colors.Safe, 2f);
+            return;
+        }
+
         var waterCrystal = crystals.crystalsStored.First(c => c.actor.OID == (uint)OID.WaterP3);
         var fireCrystal = crystals.crystalsStored.First(c => c.actor.OID == (uint)OID.FireP3);
         var windCrystal = crystals.crystalsStored.First(c => c.actor.OID == (uint)OID.WindP3);
 
         if (assignment == PartyRolesConfig.Assignment.H1)
         {
-            Arena.ZoneCircleOutline(waterCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
+            add(waterCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
         }
 
         if (assignment == PartyRolesConfig.Assignment.H2)
         {
-            Arena.ZoneCircleOutline(Module.Center + (waterCrystal.actor.Position - Module.Center).Normalized() * 3.5f, 1.5f, Colors.Safe, 2.0f);
+            add(Module.Center + (waterCrystal.actor.Position - Module.Center).Normalized() * 3.5f, 1.5f, Colors.Safe, 2.0f);
         }
 
         if (assignment is PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2)
         {
-            Arena.ZoneCircleOutline(fireCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
+            add(fireCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
         }
 
         if (assignment is PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2 or
             PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT)
         {
-            Arena.ZoneCircleOutline(windCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
+            add(windCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
         }
     }
 }
@@ -348,6 +419,32 @@ sealed class FireCrystal(BossModule module) : Components.GenericBaitProximity(mo
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            if (crystals?.nextElement == Crystals.Element.Fire && crystals.YarnPosition(assignment, out var position))
+                hints.AddForbiddenZone(new SDInvertedCircle(position, 1f), crystals.debuffPlayers.Where(p => p.debuff.ID == (uint)SID.Entropy).Select(p => p.debuff.ExpireAt).DefaultIfEmpty(WorldState.CurrentTime).Min());
+            return; // Yarn intentionally takes the elemental hits; generic bait avoidance would prevent the prescribed route.
+        }
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned || crystals?.nextElement != Crystals.Element.Fire)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
+        {
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]), default);
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
         var slots = partyConfig.SlotsPerAssignment(Raid);
         if (slots.Length == 0)
         {
@@ -360,33 +457,40 @@ sealed class FireCrystal(BossModule module) : Components.GenericBaitProximity(mo
             return;
         }
 
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            if (crystals.YarnPosition(assignment, out var position))
+                add(position, 1f, Colors.Safe, 2f);
+            return;
+        }
+
         var waterCrystal = crystals.crystalsStored.First(c => c.actor.OID == (uint)OID.WaterP3);
         var fireCrystal = crystals.crystalsStored.First(c => c.actor.OID == (uint)OID.FireP3);
         var windCrystal = crystals.crystalsStored.First(c => c.actor.OID == (uint)OID.WindP3);
 
         if (assignment == PartyRolesConfig.Assignment.H1)
         {
-            Arena.ZoneCircleOutline(waterCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
+            add(waterCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
         }
 
         if (assignment == PartyRolesConfig.Assignment.H2)
         {
-            Arena.ZoneCircleOutline(Module.Center + (waterCrystal.actor.Position - Module.Center).Normalized() * 3.5f, 1.5f, Colors.Safe, 2.0f);
+            add(Module.Center + (waterCrystal.actor.Position - Module.Center).Normalized() * 3.5f, 1.5f, Colors.Safe, 2.0f);
         }
 
         if (assignment is PartyRolesConfig.Assignment.R1 or PartyRolesConfig.Assignment.R2)
         {
-            Arena.ZoneCircleOutline(fireCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
+            add(fireCrystal.actor.Position, 1.5f, Colors.Safe, 2.0f);
         }
 
         if (assignment is PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.M2)
         {
-            Arena.ZoneCircleOutline(windCrystal.actor.Position + (windCrystal.actor.Position - Module.Center).Normalized().OrthoL() * 2.5f, 1.0f, Colors.Safe, 2.0f);
+            add(windCrystal.actor.Position + (windCrystal.actor.Position - Module.Center).Normalized().OrthoL() * 2.5f, 1.0f, Colors.Safe, 2.0f);
         }
 
         if (assignment is PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.OT)
         {
-            Arena.ZoneCircleOutline(windCrystal.actor.Position + (windCrystal.actor.Position - Module.Center).Normalized().OrthoR() * 2.5f, 1.0f, Colors.Safe, 2.0f);
+            add(windCrystal.actor.Position + (windCrystal.actor.Position - Module.Center).Normalized().OrthoR() * 2.5f, 1.0f, Colors.Safe, 2.0f);
         }
     }
 }
@@ -530,6 +634,26 @@ sealed class UmbraSmash(BossModule module) : Components.GenericBaitProximity(mod
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
     {
+        DrawSafeSpots(pcSlot, pc, Arena.ZoneCircleOutline);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (assignment == PartyRolesConfig.Assignment.Unassigned)
+            return;
+        List<ShapeDistance> safeSpots = [];
+        DrawSafeSpots(slot, actor, (position, radius, color, _) =>
+        {
+            if (color == Colors.Safe)
+                safeSpots.Add(new SDCircle(position, radius));
+        });
+        if (safeSpots.Count > 0)
+            hints.AddForbiddenZone(new SDInvertedUnion([.. safeSpots]), default);
+    }
+
+    private void DrawSafeSpots(int pcSlot, Actor pc, Action<WPos, float, uint, float> add)
+    {
         if (crystals == null || crystals.crystals.Count != 1)
         {
             return;
@@ -551,7 +675,7 @@ sealed class UmbraSmash(BossModule module) : Components.GenericBaitProximity(mod
 
         if (assignment == PartyRolesConfig.Assignment.R1)
         {
-            Arena.ZoneCircleOutline((Arena.Center - (windCrystal.actor.Position - Arena.Center).Normalized() * 20f) + new WDir(0, 1.0f), 1.0f, Colors.Safe, 2.0f);
+            add((Arena.Center - (windCrystal.actor.Position - Arena.Center).Normalized() * 20f) + new WDir(0, 1.0f), 1.0f, Colors.Safe, 2.0f);
         }
     }
 }
@@ -561,6 +685,13 @@ sealed class UltimaBlaster(BossModule module) : Components.RaidwideInstant(modul
 sealed class UltimaBlasterLimitCut(BossModule module) : Components.GenericBaitAway(module)
 {
     private WPos startPosition;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        foreach (var bait in ActiveBaitsOn(actor))
+            hints.AddForbiddenZone(new SDInvertedCircle(Arena.Center + (Arena.Center - bait.Source.Position).Normalized().Rotate(angleRotate * 0.5f) * 19f, 0.75f), bait.Activation);
+    }
     private Angle angleRotate;
     private readonly int[] orbNumbers = Utils.MakeArray(8, -1);
 
@@ -647,7 +778,7 @@ sealed class HeadTailWind(BossModule module) : Components.GenericKnockback(modul
     {
         if (spell.Action.ID == (uint)AID.VacuumWave)
         {
-            wave = new(caster.Position, DateTime.Now, false);
+            wave = new(caster.Position, Module.CastFinishAt(spell), false);
         }
     }
 
@@ -693,12 +824,30 @@ sealed class HeadTailWind(BossModule module) : Components.GenericKnockback(modul
 
     public override ReadOnlySpan<Knockback> ActiveKnockbacks(int slot, Actor actor)
     {
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy && wave.EventHappened)
+            return [];
         if (wave.Origin != default)
         {
             return new[] { new Knockback(wave.Origin, KnockDistance(slot, actor, wave.Origin), wave.Activation) };
         }
 
         return [];
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (!Service.Config.Get<DMUConfig>().YarnPirenStrategy || wave.Origin == default || wave.EventHappened)
+            return;
+        var direction = Direction[slot];
+        if (direction is not (uint)SID.Headwind and not (uint)SID.Tailwind)
+            return;
+        var toSource = (wave.Origin - actor.Position).Normalized();
+        var safeFacing = (direction == (uint)SID.Headwind ? -toSource : toSource).ToAngle();
+        hints.ForbiddenDirections.Add((safeFacing + 180f.Degrees(), 135f.Degrees(), wave.Activation));
+        var fromCenter = wave.Origin - Module.Center;
+        if (fromCenter.LengthSq() > 100f)
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center + fromCenter.Normalized() * 10f, 0.5f), wave.Activation);
     }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
@@ -766,9 +915,18 @@ sealed class Cyclone(BossModule module) : Components.GenericStackSpread(module)
 {
     private readonly HeadTailWind? windDebuffs = module.FindComponent<HeadTailWind>();
     public int NumCasts = 0;
+    private DateTime yarnStackAt;
+
+    public override void AddGlobalHints(Actor actor, GlobalHints hints)
+    {
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy && NumCasts < 8)
+            hints.Add("Tank LB3 at 70% of Vacuum Wave; all eight stack center after knockback");
+    }
 
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
     {
+        if (spell.Action.ID == (uint)AID.VacuumWave)
+            yarnStackAt = WorldState.CurrentTime.AddSeconds(3.9f);
         if (spell.Action.ID == (uint)AID.Cyclone)
         {
             NumCasts++;
@@ -779,6 +937,14 @@ sealed class Cyclone(BossModule module) : Components.GenericStackSpread(module)
     {
         Stacks.Clear();
 
+        if (Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            var target = Raid.WithoutSlot().FirstOrDefault();
+            if (yarnStackAt != default && NumCasts < 8 && target != null)
+                Stacks.Add(new(target, 6f, 8, 8, yarnStackAt));
+            return;
+        }
+
         if (windDebuffs == null)
         {
             return;
@@ -788,6 +954,17 @@ sealed class Cyclone(BossModule module) : Components.GenericStackSpread(module)
         {
             Stacks.Add(new(player, 6.0f));
         }
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (!Service.Config.Get<DMUConfig>().YarnPirenStrategy)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            return;
+        }
+        if (yarnStackAt != default && NumCasts < 8)
+            hints.AddForbiddenZone(new SDInvertedCircle(Module.Center, 1.5f), yarnStackAt);
     }
 }
 
@@ -975,12 +1152,110 @@ sealed class BlackHoleActors(BossModule module) : Components.Voidzone(module, 2.
 
 sealed class BlackHole(BossModule module) : Components.BaitAwayTethers(module, new AOEShapeRect(125.0f, 3.0f), (uint)TetherID.BlackHoleTether)
 {
+    private readonly DMUConfig config = Service.Config.Get<DMUConfig>();
     private readonly List<(Actor blackHole, ulong target)> Tethers = [];
     private readonly KefkaMax? kefkaMax = module.FindComponent<KefkaMax>();
 
     private enum Roles { NONE, DPS, SUPPORT, ACCRETION }
     private readonly (Roles role, int order)[] orderedRoles = Utils.MakeArray(8, (Roles.NONE, 0));
     private (Roles role, int order)[] currentSet = [];
+
+    // Yarn's observed attack/bind/stop markers define the four swaps; no role-priority guess is needed.
+    private Sign[] YarnRecipients() => NumCasts switch
+    {
+        0 => [Sign.Attack1],
+        1 => [Sign.Attack1, Sign.Attack2],
+        3 => [Sign.Attack1, Sign.Attack2, Sign.Attack3],
+        6 => [Sign.Bind1, Sign.Attack2, Sign.Attack3],
+        9 => [Sign.Bind1, Sign.Bind2, Sign.Attack3],
+        12 => [Sign.Bind1, Sign.Bind2, Sign.Bind3],
+        15 => [Sign.Ignore1, Sign.Bind2, Sign.Bind3],
+        18 => [Sign.Ignore1, Sign.Ignore2, Sign.Bind3],
+        21 => [Sign.Ignore1, Sign.Ignore2],
+        23 => [Sign.Ignore2],
+        _ => []
+    };
+
+    private bool YarnMarkersKnown()
+    {
+        Sign[] signs = [Sign.Attack1, Sign.Attack2, Sign.Attack3, Sign.Bind1, Sign.Bind2, Sign.Bind3, Sign.Ignore1, Sign.Ignore2];
+        var recipients = new HashSet<ulong>();
+        foreach (var sign in signs)
+        {
+            var id = WorldState.Waymarks[sign];
+            var slot = Raid.FindSlot(id);
+            var order = sign <= Sign.Attack3 ? 1 : sign <= Sign.Bind3 ? 2 : 3;
+            if (id == 0 || slot < 0 || Raid[slot] is not { IsDead: false } || orderedRoles[slot].order != order || !recipients.Add(id))
+                return false;
+        }
+        return true;
+    }
+
+    private int YarnAssignedTether(Actor actor)
+    {
+        var recipients = YarnRecipients();
+        var index = config.YarnPirenStrategy && YarnMarkersKnown() && kefkaMax?.boss != null
+            && Tethers.Count == recipients.Length && Tethers.Select(t => t.blackHole.InstanceID).Distinct().Count() == Tethers.Count
+            ? Array.FindIndex(recipients, s => WorldState.Waymarks[s] == actor.InstanceID) : -1;
+        if (index < 0)
+            return -1;
+        var radial = Tethers[index].blackHole.Position - Module.Center;
+        return radial.LengthSq() >= 64f && Math.Min(Math.Abs(radial.X), Math.Abs(radial.Z)) <= 0.5f ? index : -1;
+    }
+
+    public override void AddHints(int slot, Actor actor, TextHints hints)
+    {
+        base.AddHints(slot, actor, hints);
+        var index = YarnAssignedTether(actor);
+        if (index >= 0)
+            hints.Add(Tethers[index].target != actor.InstanceID ? "Take your marked Black Hole tether!"
+                : NumCasts == 0 ? "Bait Black Hole counterclockwise!" : "Bait Black Hole clockwise!", Tethers[index].target != actor.InstanceID);
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        var index = YarnAssignedTether(actor);
+        if (index < 0)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            return;
+        }
+        var (source, holderID) = Tethers[index];
+        var radial = source.Position - Module.Center;
+        var radius = radial.Length();
+        if (holderID == actor.InstanceID)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            var outward = radial / radius;
+            var tangent = NumCasts == 0 ? outward.OrthoL() : outward.OrthoR();
+            // The first standby is CCW; later beams point CW. Margins use beam width/hole radius, not diagram pixels.
+            hints.AddForbiddenZone(new SDHalfPlane(Module.Center + tangent * 4f, tangent));
+            hints.AddForbiddenZone(new SDHalfPlane(source.Position - outward * 3f, -outward));
+            return;
+        }
+        var holder = WorldState.Actors.Find(holderID);
+        if (holder == null || (holder.Position - source.Position).LengthSq() < 25f)
+        {
+            base.AddAIHints(slot, actor, assignment, hints);
+            return;
+        }
+        // Cross the observed tether outside the hole; exempt only that beam while approaching its pickup.
+        var line = holder.Position - source.Position;
+        var length = line.Length();
+        var direction = line / length;
+        var pickup = source.Position + direction * Math.Clamp((actor.Position - source.Position).Dot(direction), 4f, length - 1f);
+        var saved = CurrentBaits;
+        try
+        {
+            CurrentBaits = saved.Where(b => b.Source.InstanceID != source.InstanceID).ToList();
+            base.AddAIHints(slot, actor, assignment, hints);
+        }
+        finally
+        {
+            CurrentBaits = saved;
+        }
+        hints.AddForbiddenZone(new SDInvertedCircle(pickup, 0.75f));
+    }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {
@@ -1101,7 +1376,8 @@ sealed class BlackHole(BossModule module) : Components.BaitAwayTethers(module, n
                 continue;
             }
 
-            var assignedToMe = i < currentSet.Length && orderedRoles[pcSlot].role == currentSet[i].role && orderedRoles[pcSlot].order == currentSet[i].order;
+            var assignedToMe = config.YarnPirenStrategy ? i == YarnAssignedTether(pc)
+                : i < currentSet.Length && orderedRoles[pcSlot].role == currentSet[i].role && orderedRoles[pcSlot].order == currentSet[i].order;
             Arena.AddLine(blackHoleActor.Position, target.Position, assignedToMe ? Colors.Safe : Colors.Danger, 3.0f);
         }
     }
@@ -1402,6 +1678,7 @@ sealed class BigBang(BossModule module) : Components.GenericAOEs(module)
 
 sealed class StompAMole(BossModule module) : Components.GenericTowers(module)
 {
+    private readonly DMUConfig config = Service.Config.Get<DMUConfig>();
     private Actor? boss = null;
     private readonly KnockDown? stacks = module.FindComponent<KnockDown>();
     private enum TowerSide { LEFT, RIGHT }
@@ -1409,6 +1686,23 @@ sealed class StompAMole(BossModule module) : Components.GenericTowers(module)
     private readonly PartyRolesConfig partyConfig = Service.Config.Get<PartyRolesConfig>();
 
     private IEnumerable<(Tower tower, TowerSide side, int wave)> CurrentTowers => towers.Where(t => t.wave == (NumCasts < 2 ? 0 : 1));
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        if (!config.YarnPirenStrategy || partyConfig.SlotsPerAssignment(Raid).Length == 0)
+            return;
+        var role = partyConfig[Raid.Members[slot].ContentId];
+        TowerSide? side = role switch
+        {
+            PartyRolesConfig.Assignment.MT or PartyRolesConfig.Assignment.H1 or PartyRolesConfig.Assignment.M1 or PartyRolesConfig.Assignment.R1 => TowerSide.LEFT,
+            PartyRolesConfig.Assignment.OT or PartyRolesConfig.Assignment.H2 or PartyRolesConfig.Assignment.M2 or PartyRolesConfig.Assignment.R2 => TowerSide.RIGHT,
+            _ => null
+        };
+        var assigned = CurrentTowers.Where(t => t.side == side && !t.tower.ForbiddenSoakers[slot]).ToArray();
+        if (assigned.Length == 1)
+            hints.AddForbiddenZone(new SDInvertedCircle(assigned[0].tower.Position, 4f));
+    }
 
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {

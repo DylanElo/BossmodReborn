@@ -218,13 +218,13 @@ class M12S2LindwurmStates : StateMachineBuilder
 
         // circle transform, clone mechanics trigger after a delay
         // 359.88 (cast start) -> 370.37 (first) -> 375.32 (second)
-        CastStart(id + 0x210u, AID.TwistedVision, 2.8f)
+        CastStart(id + 0x210u, AID.TwistedVision, 2.8f);
+        ComponentCondition<IdyllicDreamArena>(id + 0x211u, 5.2f, static comp => comp.State == 0, "Platforms disappear")
             .ActivateOnEnter<IdyllicDreamWurmStackSpread>();
-        ComponentCondition<IdyllicDreamArena>(id + 0x211u, 5.2f, static comp => comp.State == 0, "Platforms disappear");
         //.ExecOnExit<IdyllicDreamWurmStackSpread>(static comp => comp.EnableHints = true);
 
-        ComponentCondition<IdyllicDreamWurmStackSpread>(id + 0x220u, 5.2f, static comp => comp.NumCasts == 2, "Clone mechanics start");
-        ComponentCondition<IdyllicDreamWurmStackSpread>(id + 0x221u, 15f, static comp => comp.NumCasts == 8, "Clone mechanics end")
+        ComponentCondition<IdyllicDreamWurmStackSpread>(id + 0x220u, 5.2f, static comp => comp.NumCasts >= 2, "Clone mechanics start");
+        ComponentCondition<IdyllicDreamWurmStackSpread>(id + 0x221u, 15f, static comp => comp.NumCasts >= 8, "Clone mechanics end")
             .ExecOnExit<IdyllicDreamStaging>(static comp => comp.WurmsFinished = true);
 
         Timeout(id + 0x222u, 1.5f).DeactivateOnExit<IdyllicDreamWurmStackSpread>()
@@ -273,15 +273,14 @@ class M12S2LindwurmStates : StateMachineBuilder
         // clones replay stack/spread
         Cast(id + 0x320u, AID.Reenactment, 1.9f, 3f)
             .ExecOnEnter<IdyllicDreamManaBurstPlayer>(static comp => comp.Risky = true);
-        ComponentCondition<IdyllicDreamPlayerCastCounter>(id + 0x322u, 3.6f, static comp => comp.NumCasts == 4, "Reenactment 1")
+        ComponentCondition<IdyllicDreamPlayerCastCounter>(id + 0x322u, 3.6f, static comp => comp.NumCasts >= 4, "Reenactment 1")
             .ExecOnExit<IdyllicDreamArena>(static comp => comp.Predict(6.7d));
         // platform transform, jumpy clones
         Cast(id + 0x330u, AID.TwistedVision, 1.5f, 4f)
-            // TODO: fix aoe activation time, im tired
             .ExecOnEnter<IdyllicDreamPowerGusherSnakingKick>(static comp =>
             {
                 comp.Visible = true;
-                comp.Reset();
+                comp.Reset(8.5);
             });
         ComponentCondition<IdyllicDreamArena>(id + 0x332u, 1.3f, static comp => comp.State == 1, "Platforms appear");
 
@@ -292,7 +291,7 @@ class M12S2LindwurmStates : StateMachineBuilder
 
         ComponentCondition<IdyllicDreamArena>(id + 0x350u, 4.3f, static comp => comp.State == 0, "Platforms disappear")
             .ExecOnExit<IdyllicDreamManaBurstPlayer>(static comp => comp.Risky = true);
-        ComponentCondition<IdyllicDreamPlayerCastCounter>(id + 0x351, 6.6f, static comp => comp.NumCasts == 8, "Reenactment 2")
+        ComponentCondition<IdyllicDreamPlayerCastCounter>(id + 0x351, 6.6f, static comp => comp.NumCasts >= 8, "Reenactment 2")
             .DeactivateOnExit<IdyllicDreamPlayerCastCounter>()
             .DeactivateOnExit<IdyllicDreamManaBurstPlayer>()
             .DeactivateOnExit<IdyllicDreamHeavySlamPlayer>()
@@ -300,7 +299,7 @@ class M12S2LindwurmStates : StateMachineBuilder
             .ExecOnExit<IdyllicDreamPowerGusherSnakingKick>(static comp =>
             {
                 comp.Visible = true;
-                comp.Reset();
+                comp.Reset(4.8);
             });
 
         ComponentCondition<IdyllicDreamPowerGusherSnakingKick>(id + 0x352u, 4.8f, static comp => comp.NumCasts > 0, "Stored AOE")

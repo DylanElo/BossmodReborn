@@ -29,13 +29,11 @@ sealed class DMUStates : StateMachineBuilder
         ActorTargetable(id, _module.KefkaP5, true, 0.1f, "Boss appears")
             .SetHint(StateMachine.StateHint.DowntimeEnd);
 
-        ActorCast(id + 0x10u, _module.KefkaP5, AID.UltimaRepeaterCast, 3.0f, 5.0f, true, "Ultima Repeater")
-            .ActivateOnEnter<UltimaRepeater>()
-            .DeactivateOnExit<UltimaRepeater>()
-            .ActivateOnEnter<FellForces>()
-            .ExecOnEnter<FellForces>(static comp => comp.active = true);
+        ActorCast(id + 0x10u, _module.KefkaP5, AID.UltimaRepeaterCast, 3.2f, 4.0f, true, "Ultima Repeater")
+            .ActivateOnEnter<UltimaRepeater>();
+        Phase5UltimaRepeaterHits(id + 0x15u);
 
-        ComponentCondition<FellForces>(id + 0x20u, 6.0f, static comp => comp.NumCasts > 0, "1st Auto Attack Stack");
+        ComponentCondition<FellForces>(id + 0x20u, 2.6f, static comp => comp.NumCasts > 0, "1st Auto Attack Stack");
         ComponentCondition<FellForces>(id + 0x25u, 3.1f, static comp => comp.NumCasts > 3, "2nd Auto Attack Stack");
         ComponentCondition<FellForces>(id + 0x30u, 3.1f, static comp => comp.NumCasts > 6, "3rd Auto Attack Stack")
             .DeactivateOnExit<FellForces>();
@@ -60,12 +58,14 @@ sealed class DMUStates : StateMachineBuilder
             .ActivateOnExit<ChaoticFlareTB>()
             .ExecOnExit<ChaoticFlareTB>(static comp => comp.active = true);
 
-        ComponentCondition<MaddeningOrchestra>(id + 0x100u, 3.2f, static comp => comp.NumCasts > 5, "2nd Baits + TB Resolve")
+        Condition(id + 0x100u, 3.2f, () => Module.FindComponent<MaddeningOrchestra>()!.NumCasts >= 8 && Module.FindComponent<ChaoticFlareTB>()!.NumCasts > 0, "2nd Baits + TB Resolve")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ChaoticFlareTB>()
             .DeactivateOnExit<MaddeningOrchestra>()
             .ActivateOnExit<ChaoticHolyFlareDiffusion>();
 
         ComponentCondition<ChaoticHolyFlareDiffusion>(id + 0x110u, 3.5f, static comp => comp.NumCasts >= 2, "Tank Baits Resolve")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ChaoticHolyFlareDiffusion>()
             .ActivateOnEnter<FellForces>()
             .ExecOnExit<FellForces>(static comp => comp.active = true)
@@ -83,16 +83,16 @@ sealed class DMUStates : StateMachineBuilder
         ComponentCondition<CatastrophicChoice>(id + 0x155u, 0.2f, static comp => comp.NumCasts > 0, "In/Out");
         ComponentCondition<Celestriad>(id + 0x160u, 5.8f, static comp => comp.NumCasts > 4, "2nd Tower Set");
         ComponentCondition<Celestriad>(id + 0x170u, 6.0f, static comp => comp.NumCasts > 8, "3rd Tower Set");
-        ComponentCondition<CatastrophicChoice>(id + 0x175u, 0.2f, static comp => comp.NumCasts > 1, "2nd In/Out");
+        Condition(id + 0x175u, 0.2f, () => Module.FindComponent<CatastrophicChoice>()!.NumCasts > 1 && Module.FindComponent<Celestriad>()!.NumCasts >= 12, "2nd In/Out")
+            .DeactivateOnExit<Celestriad>()
+            .DeactivateOnExit<CatastrophicChoice>();
 
         ActorCast(id + 0x180u, _module.KefkaP5, AID.UltimaRepeaterCast, 4.0f, 4.0f, true, "Ultima Repeater")
-            .ActivateOnEnter<UltimaRepeater>()
-            .DeactivateOnExit<UltimaRepeater>()
-            .ActivateOnEnter<FellForces>()
-            .ExecOnEnter<FellForces>(static comp => comp.active = true)
+            .ActivateOnEnter<UltimaRepeater>();
+        Phase5UltimaRepeaterHits(id + 0x185u)
             .ExecOnEnter<FellForces>(static comp => comp.expectedCasts = 6);
 
-        ComponentCondition<FellForces>(id + 0x190, 6.0f, static comp => comp.NumCasts > 0, "1st Auto Attack Stack");
+        ComponentCondition<FellForces>(id + 0x190, 2.6f, static comp => comp.NumCasts > 0, "1st Auto Attack Stack");
         ComponentCondition<FellForces>(id + 0x200, 3.1f, static comp => comp.NumCasts > 3, "2nd Auto Attack Stack")
             .DeactivateOnExit<FellForces>();
 
@@ -112,12 +112,14 @@ sealed class DMUStates : StateMachineBuilder
             .ActivateOnExit<ChaoticFlareTB>()
             .ExecOnExit<ChaoticFlareTB>(comp => comp.active = true);
 
-        ComponentCondition<MaddeningOrchestra>(id + 0x260u, 3.2f, static comp => comp.NumCasts > 5, "2nd Baits + TB Resolve")
+        Condition(id + 0x260u, 3.2f, () => Module.FindComponent<MaddeningOrchestra>()!.NumCasts >= 8 && Module.FindComponent<ChaoticFlareTB>()!.NumCasts > 0, "2nd Baits + TB Resolve")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ChaoticFlareTB>()
             .DeactivateOnExit<MaddeningOrchestra>()
             .ActivateOnExit<ChaoticHolyFlareDiffusion>();
 
-        ComponentCondition<ChaoticHolyFlareDiffusion>(id + 0x270u, 3.5f, static comp => comp.NumCasts > 0, "Tank Baits Resolve")
+        ComponentCondition<ChaoticHolyFlareDiffusion>(id + 0x270u, 3.5f, static comp => comp.NumCasts >= 2, "Tank Baits Resolve")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ChaoticHolyFlareDiffusion>()
             .ActivateOnExit<FellForces>()
             .ExecOnExit<FellForces>(comp => comp.active = true);
@@ -125,13 +127,49 @@ sealed class DMUStates : StateMachineBuilder
         ComponentCondition<FellForces>(id + 0x280u, 4.7f, static comp => comp.NumCasts > 0, "1st Auto Attack Stack");
         ComponentCondition<FellForces>(id + 0x290u, 3.1f, static comp => comp.NumCasts > 3, "2nd Auto Attack Stack");
         ComponentCondition<FellForces>(id + 0x300u, 3.1f, static comp => comp.NumCasts > 6, "3rd Auto Attack Stack")
-            .DeactivateOnExit<FellForces>()
+            .DeactivateOnExit<FellForces>();
+
+        // cactbot dancing_mad.txt (e79ea7f1): final sequence at 1541.4-1613.4, resync on actual damage events.
+        ActorCast(id + 0x310u, _module.KefkaP5, AID.ForsakenCast, 1.3f, 10.0f, true, "Forsaken 1")
             .ActivateOnEnter<P5ForsakenBait>()
             .ActivateOnEnter<P5ForsakenRaidWide>()
             .ActivateOnEnter<P5ForsakenGround>()
-            .ActivateOnEnter<P5ForsakenStack>();
+            .ActivateOnEnter<P5ForsakenStack>()
+            .SetHint(StateMachine.StateHint.Raidwide);
 
-        Timeout(id + 0x500000u, 30.0f, "P5 Unknown");
+        ComponentCondition<P5ForsakenBait>(id + 0x320u, 6.0f, static comp => comp.NumCasts > 0, "Forsaken Bonds + Ground 1");
+        ComponentCondition<P5ForsakenRaidWide>(id + 0x330u, 2.2f, static comp => comp.NumCasts > 1, "Forsaken 2")
+            .ExecOnExit<P5ForsakenBait>(static comp => comp.NumCasts = 0)
+            .SetHint(StateMachine.StateHint.Raidwide);
+        ComponentCondition<P5ForsakenBait>(id + 0x340u, 5.0f, static comp => comp.NumCasts > 0, "Forsaken Bonds + Ground 2");
+        ComponentCondition<P5ForsakenRaidWide>(id + 0x350u, 3.1f, static comp => comp.NumCasts > 2, "Forsaken 3")
+            .ExecOnExit<P5ForsakenBait>(static comp => comp.NumCasts = 0)
+            .SetHint(StateMachine.StateHint.Raidwide);
+        ComponentCondition<P5ForsakenBait>(id + 0x360u, 5.0f, static comp => comp.NumCasts > 0, "Forsaken Bonds + Ground 3");
+        ComponentCondition<P5ForsakenRaidWide>(id + 0x370u, 3.2f, static comp => comp.NumCasts > 3, "Forsaken 4")
+            .ExecOnExit<P5ForsakenBait>(static comp => comp.NumCasts = 0)
+            .SetHint(StateMachine.StateHint.Raidwide)
+            .DeactivateOnExit<P5ForsakenRaidWide>();
+        ComponentCondition<P5ForsakenBait>(id + 0x380u, 5.0f, static comp => comp.NumCasts > 0, "Forsaken Bonds + Ground 4")
+            .DeactivateOnExit<P5ForsakenBait>()
+            .DeactivateOnExit<P5ForsakenStack>();
+        ActorCast(id + 0x390u, _module.KefkaP5, AID._Ability_ForsakenNull, 5.2f, 26.0f, true, "Enrage")
+            .SetHint(StateMachine.StateHint.Raidwide);
+    }
+
+    private State Phase5UltimaRepeaterHits(uint id)
+    {
+        ComponentCondition<UltimaRepeater>(id, 1.1f, static comp => comp.NumCasts > 0, "Ultima Repeater 1")
+            .SetHint(StateMachine.StateHint.Raidwide);
+        ComponentCondition<UltimaRepeater>(id + 1u, 0.8f, static comp => comp.NumCasts > 1, "Ultima Repeater 2")
+            .SetHint(StateMachine.StateHint.Raidwide);
+        ComponentCondition<UltimaRepeater>(id + 2u, 0.7f, static comp => comp.NumCasts > 2, "Ultima Repeater 3")
+            .SetHint(StateMachine.StateHint.Raidwide);
+        return ComponentCondition<UltimaRepeater>(id + 3u, 0.8f, static comp => comp.NumCasts > 3, "Ultima Repeater 4")
+            .SetHint(StateMachine.StateHint.Raidwide)
+            .DeactivateOnExit<UltimaRepeater>()
+            .ActivateOnEnter<FellForces>()
+            .ExecOnEnter<FellForces>(static comp => comp.active = true);
     }
 
     // TODO update raidwides to actually use actors instead since it should now be fixed and able to find the boss correctly
@@ -153,9 +191,11 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<BlizzardSafeSpots>();
 
         ComponentCondition<GrandCrossOrder>(id + 0x30u, 4.4f, static comp => comp.currentCast > 0, "Raidwide (1st Grand Cross)")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<GrandCrossRaidwide>()
             .DeactivateOnExit<GrandCrossRaidwide>();
         ComponentCondition<TsunamiInfernoOrder>(id + 0x40u, 5.1f, static comp => comp.currentCast > 0, "Raidwide (1st Tsunami Inferno)")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<TsunamiRaidwide>()
             .ActivateOnEnter<InfernoRaidwide>()
             .DeactivateOnExit<TsunamiRaidwide>()
@@ -170,9 +210,11 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<BlizzardSafeSpots>();
 
         ComponentCondition<GrandCrossOrder>(id + 0x70u, 4.2f, static comp => comp.currentCast > 1, "Raidwide (2nd Grand Cross)")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<GrandCrossRaidwide>()
             .DeactivateOnExit<GrandCrossRaidwide>();
         ComponentCondition<TsunamiInfernoOrder>(id + 0x80u, 5.2f, static comp => comp.currentCast > 1, "Raidwide (2nd Tsunami Inferno)")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<TsunamiRaidwide>()
             .ActivateOnEnter<InfernoRaidwide>()
             .DeactivateOnExit<TsunamiRaidwide>()
@@ -187,6 +229,7 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<BlizzardSafeSpots>();
 
         ComponentCondition<GrandCrossOrder>(id + 0x110u, 3.9f, static comp => comp.currentCast > 2, "Raidwide (3rd Grand Cross)")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<GrandCrossRaidwide>()
             .DeactivateOnExit<GrandCrossRaidwide>()
             .ActivateOnExit<AntiLight>()
@@ -196,6 +239,7 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<AntiLight>()
             .DeactivateOnExit<EdgeOfDeath>()
             .ActivateOnExit<ForkedWater>()
+            .ExecOnExit<ForkedWater>(static comp => comp.FirstSet = true)
             .ActivateOnExit<AccelerationBomb>();
 
         Condition(id + 0x130u, 8.4f, () => Module.FindComponent<AccelerationBomb>()!.NumCasts >= 4 &&
@@ -225,6 +269,7 @@ sealed class DMUStates : StateMachineBuilder
             .ExecOnExit<ForkedWater>(static comp => comp.active = true);
 
         ComponentCondition<UltimaUpsurge>(id + 0x166u, 2.5f, static comp => comp.NumCasts > 0, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .DeactivateOnExit<UltimaUpsurge>();
 
         ComponentCondition<InfernoBaits>(id + 0x170u, 2.5f, static comp => comp.NumCasts >= 8, "Inferno Baits")
@@ -282,6 +327,7 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<TheDecisiveBattle>();
 
         ActorCast(id + 0x40u, _module.ChaosP3, AID.BowelsOfAgony, 14.4f, 5.0f, true, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<BowelsOfAgony>()
             .DeactivateOnExit<BowelsOfAgony>()
             .ActivateOnExit<Crystals>();
@@ -295,8 +341,10 @@ sealed class DMUStates : StateMachineBuilder
 
         ActorCast(id + 0x70u, _module.ExdeathP3, AID.ThunderIII, 3.4f, 5.0f, true, "Tankbuster cast")
             .ActivateOnEnter<ThunderIIITB>();
-        ComponentCondition<ThunderIIITB>(id + 0x75u, 0.1f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit");
+        ComponentCondition<ThunderIIITB>(id + 0x75u, 0.1f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<ThunderIIITB>(id + 0x80u, 3.0f, static comp => comp.NumCasts > 1, "Tankbuster 2nd hit")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ThunderIIITB>();
 
         var state3 = ActorCastStartMulti(id + 0x90u, _module.ChaosP3, [AID.LongitudinalImplosion, AID.LatitudinalImplosion], 4.8f, true)
@@ -339,7 +387,8 @@ sealed class DMUStates : StateMachineBuilder
         ActorCastStart(id + 0x130u, _module.ChaosP3, AID.UmbraSmash, 9.3f, true, "UmbraSmash bait")
             .ActivateOnEnter<UltimaBlasterLimitCut>();
 
-        ComponentCondition<UltimaBlaster>(id + 0x140u, 0.8f, static comp => comp.NumCasts > 0, "Raidwides start");
+        ComponentCondition<UltimaBlaster>(id + 0x140u, 0.8f, static comp => comp.NumCasts > 0, "Raidwides start")
+            .SetHint(StateMachine.StateHint.Raidwide);
 
         ComponentCondition<UmbraSmash>(id + 0x150u, 4.1f, static comp => comp.NumCasts > 0, "UmbraSmash bait resolves")
             .ActivateOnEnter<HeadTailWind>()
@@ -359,8 +408,10 @@ sealed class DMUStates : StateMachineBuilder
 
         ActorCast(id + 0x200u, _module.ExdeathP3, AID.ThunderIII, 1.0f, 5.0f, true, "Tankbuster cast")
             .ActivateOnEnter<ThunderIIITB>();
-        ComponentCondition<ThunderIIITB>(id + 0x205u, 0.1f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit");
+        ComponentCondition<ThunderIIITB>(id + 0x205u, 0.1f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<ThunderIIITB>(id + 0x210u, 3.1f, static comp => comp.NumCasts > 1, "Tankbuster 2nd hit")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ThunderIIITB>();
 
         ActorCast(id + 0x220u, _module.ChaosP3, AID.TheDecisiveBattle, 1.9f, 3.0f, true)
@@ -368,12 +419,15 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<TheDecisiveBattle>()
             .ActivateOnExit<ThunderIIITB>();
 
-        ComponentCondition<ThunderIIITB>(id + 0x235u, 9.2f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit");
+        ComponentCondition<ThunderIIITB>(id + 0x235u, 9.2f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<ThunderIIITB>(id + 0x240u, 3.1f, static comp => comp.NumCasts > 1, "Tankbuster 2nd hit")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ThunderIIITB>()
             .ActivateOnEnter<EarthquakeRaidwide>();
 
         ComponentCondition<EarthquakeRaidwide>(id + 0x250u, 1.8f, static comp => comp.NumCasts > 0, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .DeactivateOnExit<EarthquakeRaidwide>()
             .ActivateOnEnter<KefkaMax>()
             .ActivateOnExit<SlapHappy>()
@@ -390,8 +444,10 @@ sealed class DMUStates : StateMachineBuilder
         ActorCastStart(id + 0x280u, _module.ExdeathP3, AID.ThunderIII, 5.3f, true, "Tankbuster cast")
             .ActivateOnEnter<ThunderIIITB>();
         ComponentCondition<BlackHole>(id + 0x290u, 1.8f, static comp => comp.NumCasts > 1, "Tethers set 1-2");
-        ComponentCondition<ThunderIIITB>(id + 0x295u, 3.2f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit");
+        ComponentCondition<ThunderIIITB>(id + 0x295u, 3.2f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<ThunderIIITB>(id + 0x300u, 3.1f, static comp => comp.NumCasts > 1, "Tankbuster 2nd hit")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ThunderIIITB>()
             .ActivateOnEnter<DamningEdict>();
 
@@ -417,8 +473,10 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<LookUponMeAndDespairAOE>()
             .ActivateOnEnter<ThunderIIITB>();
 
-        ComponentCondition<ThunderIIITB>(id + 0x395u, 4.5f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit");
+        ComponentCondition<ThunderIIITB>(id + 0x395u, 4.5f, static comp => comp.NumCasts > 0, "Tankbuster 1st hit")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<ThunderIIITB>(id + 0x400u, 3.1f, static comp => comp.NumCasts > 1, "Tankbuster 2nd hit")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<ThunderIIITB>();
 
         ComponentCondition<BlackHole>(id + 0x410u, 10.1f, static comp => comp.NumCasts > 12, "Tethers set 3-1");
@@ -427,6 +485,7 @@ sealed class DMUStates : StateMachineBuilder
             .ActivateOnEnter<WhiteHole>();
 
         ComponentCondition<WhiteHole>(id + 0x440u, 11.0f, static comp => comp.NumCasts > 0, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .DeactivateOnExit<WhiteHole>()
             .ActivateOnEnter<LongitudinalLatitudinalImplosion>()
             .ActivateOnEnter<SlapHappy>()
@@ -469,6 +528,7 @@ sealed class DMUStates : StateMachineBuilder
             .ActivateOnEnter<BigBang>()
             .ActivateOnEnter<P3BlizzardMove>();
         ComponentCondition<P3BlizzardMove>(id + 0x610u, 3.5f, static comp => comp.NumCasts > 0, "Blizzard Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .DeactivateOnExit<P3BlizzardMove>();
         ComponentCondition<BigBang>(id + 0x620u, 1.2f, static comp => comp.NumCasts > 1, "Stack AOEs resolve")
             .DeactivateOnExit<BigBang>()
@@ -482,9 +542,11 @@ sealed class DMUStates : StateMachineBuilder
         ActorTargetable(id, _module.BossP2, true, 10.3f, "Boss appears")
             .SetHint(StateMachine.StateHint.DowntimeEnd);
         ActorCast(id + 0x10u, _module.BossP2, AID.UltimateEmbrace, 7.2f, 5.0f, true, "Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .ActivateOnEnter<UltimateEmbrace>()
             .DeactivateOnExit<UltimateEmbrace>();
         ActorCast(id + 0x20u, _module.BossP2, AID.Forsaken, 8.2f, 7.0f, true, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<Forsaken>()
             .DeactivateOnExit<Forsaken>()
             .ActivateOnEnter<ForsakenShapes>()
@@ -581,6 +643,7 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<AllThingsEndingCasts>();
 
         ActorCast(id + 0x150u, _module.BossP2, AID.LightOfJudgmentP2, 4.1f, 5.0f, true, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<LightOfJudgmentP2>()
             .DeactivateOnExit<LightOfJudgmentP2>();
 
@@ -597,8 +660,10 @@ sealed class DMUStates : StateMachineBuilder
         ComponentCondition<Trine>(id + 0x210u, 2.0f, static comp => comp.NumCasts == 22, "Trine 3 Explosions")
             .DeactivateOnExit<Trine>();
         ComponentCondition<WingsOfDestructionTB>(id + 0x220u, 0.6f, comp => comp.NumCasts > 0, "Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<WingsOfDestructionTB>();
-        ActorCast(id + 0x220u, _module.BossP2, AID.UltimateEmbrace, 2.1f, 5.0f, true, "Tankbuster")
+        ActorCast(id + 0x230u, _module.BossP2, AID.UltimateEmbrace, 2.1f, 5.0f, true, "Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .ActivateOnEnter<UltimateEmbrace>()
             .DeactivateOnExit<UltimateEmbrace>();
 
@@ -617,8 +682,10 @@ sealed class DMUStates : StateMachineBuilder
     void Phase1RevoltingRuinIII(uint id, float delay)
     {
         Cast(id, AID.RevoltingRuinIII, delay, 5f, "Tankbuster 1")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .ActivateOnEnter<RevoltingRuinIII>();
         ComponentCondition<RevoltingRuinIII>(id + 0x05u, 3.25f, static comp => comp.NumCasts > 1, "Tankbuster 2")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<RevoltingRuinIII>();
     }
 
@@ -634,7 +701,7 @@ sealed class DMUStates : StateMachineBuilder
         ComponentCondition<BlizzardSafeSpots>(id + 0x40u, 2.3f, static comp => comp.NumCasts > 0, "Blizzard safe spots")
             .DeactivateOnExit<BlizzardSafeSpots>();
 
-        ComponentCondition<StackSpreadOrbs>(id + 0x40u, 0.8f, static comp => !comp.Active, "Stack / Spread")
+        ComponentCondition<StackSpreadOrbs>(id + 0x41u, 0.8f, static comp => !comp.Active, "Stack / Spread")
             .DeactivateOnExit<StackSpreadOrbs>()
             .ActivateOnEnter<WaveCannon>()
             .ActivateOnExit<DoubleTroubleTrapKnockback>()
@@ -663,12 +730,16 @@ sealed class DMUStates : StateMachineBuilder
     void Phase1Gravitas(uint id, float delay)
     {
         Cast(id + 0x90u, AID.LightOfJudgment, delay, 5.0f, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .ActivateOnEnter<LightOfJudgment>()
             .DeactivateOnExit<LightOfJudgment>()
             .ActivateOnEnter<HyperDrive>();
-        ComponentCondition<HyperDrive>(id + 0x100u, 3.2f, static comp => comp.NumCasts > 0, "1st Tankbuster");
-        ComponentCondition<HyperDrive>(id + 0x110u, 2.1f, static comp => comp.NumCasts > 1, "2nd Tankbuster");
+        ComponentCondition<HyperDrive>(id + 0x100u, 3.2f, static comp => comp.NumCasts > 0, "1st Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster);
+        ComponentCondition<HyperDrive>(id + 0x110u, 2.1f, static comp => comp.NumCasts > 1, "2nd Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<HyperDrive>(id + 0x120u, 2.1f, static comp => comp.NumCasts > 2, "3rd Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<HyperDrive>();
 
         Cast(id + 0x130u, AID.GravenImage, 7.3f, 3, "Graven Image")
@@ -680,8 +751,10 @@ sealed class DMUStates : StateMachineBuilder
         ComponentCondition<Gravitas>(id + 0x150u, 4.1f, static comp => !comp.Active, "Spreads")
             .ActivateOnEnter<RevoltingRuinIII>()
             .ActivateOnEnter<GravitationalWave>();
-        Cast(id + 0x160u, AID.RevoltingRuinIII, 0.7f, 5, "1st Tankbuster");
+        Cast(id + 0x160u, AID.RevoltingRuinIII, 0.7f, 5, "1st Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<RevoltingRuinIII>(id + 0x165u, 3.25f, static comp => comp.NumCasts > 1, "2nd Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<RevoltingRuinIII>();
         ComponentCondition<GravitationalWave>(id + 0x170u, 0.80f, static comp => comp.NumCasts > 0, "Left/Right Cleave")
             .DeactivateOnExit<GravitationalWave>();
@@ -697,13 +770,17 @@ sealed class DMUStates : StateMachineBuilder
             .DeactivateOnExit<DoubleTroubleTrapStacks>()
             .DeactivateOnExit<DoubleTroubleTrapKnockback>();
         Cast(id + 0x220u, AID.LightOfJudgment, 9.2f, 5.0f, "Raidwide")
+            .SetHint(StateMachine.StateHint.Raidwide)
             .DeactivateOnExit<GravitasPuddles>()
             .ActivateOnEnter<LightOfJudgment>()
             .DeactivateOnExit<LightOfJudgment>()
             .ActivateOnEnter<HyperDrive>();
-        ComponentCondition<HyperDrive>(id + 0x225, 3.2f, static comp => comp.NumCasts > 0, "1st Tankbuster");
-        ComponentCondition<HyperDrive>(id + 0x230, 2.1f, static comp => comp.NumCasts > 1, "2nd Tankbuster");
+        ComponentCondition<HyperDrive>(id + 0x225, 3.2f, static comp => comp.NumCasts > 0, "1st Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster);
+        ComponentCondition<HyperDrive>(id + 0x230, 2.1f, static comp => comp.NumCasts > 1, "2nd Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster);
         ComponentCondition<HyperDrive>(id + 0x235, 2.1f, static comp => comp.NumCasts > 2, "3rd Tankbuster")
+            .SetHint(StateMachine.StateHint.Tankbuster)
             .DeactivateOnExit<HyperDrive>();
     }
 

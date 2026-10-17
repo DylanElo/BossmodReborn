@@ -587,11 +587,8 @@ sealed class Replication2HemorrhagicProjection : Components.GenericBaitAway
 
         for (var i = 0; i < len; ++i)
         {
-            if (!_targets[i])
-                continue;
-
-            var target = Raid[i];
-            if (target == null)
+            var (slot, target) = party[i];
+            if (!_targets[slot])
                 continue;
 
             CurrentBaits.Add(new Bait(

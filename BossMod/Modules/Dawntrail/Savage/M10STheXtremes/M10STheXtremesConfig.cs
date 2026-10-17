@@ -17,6 +17,9 @@ public class M10STheXtremesConfig : ConfigNode
     [PropertyDisplay("Select which strat to use for hints")]
     public Strategy HintOption = Strategy.Hector;
 
+    [PropertyDisplay("Enable AI positions for selected strategy")]
+    public bool EnableStrategyAI;
+
     // NA does NW - S - NW - N, drops puddle along voidzone in L-shape
     // JP does NE - NW - NE - NW, drops puddle along voidzone + wall in L-shape
     [PropertyDisplay("Show spots for Flame Floater")]
