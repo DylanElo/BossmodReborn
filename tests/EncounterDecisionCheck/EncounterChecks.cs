@@ -54,7 +54,8 @@ internal static partial class EncounterChecks
         {
             foreach (var method in new[] { nameof(CheckM11), nameof(CheckM12), nameof(CheckDMU), nameof(CheckSavageNavigation),
                 nameof(CheckDMUNavigation), nameof(CheckDMUBlackHole), nameof(CheckDMUWind), nameof(CheckDMUPiren), nameof(CheckDMUOrchestra), nameof(CheckFloodNavigation),
-                nameof(CheckM12P2), nameof(CheckDMURemaining) })
+                nameof(CheckM12P2), nameof(CheckDMURemaining), nameof(CheckM12Handoff), nameof(CheckM12Spheres),
+                nameof(CheckM09Ultrasonic), nameof(CheckRemainingTiming) })
                 Check(typeof(EncounterChecks).GetMethod(method, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static) != null,
                     $"required production decision checks implemented: {method}");
         });
@@ -69,6 +70,10 @@ internal static partial class EncounterChecks
         RunGroup("DMU Piren navigation", () => CheckDMUPiren());
         RunGroup("DMU orchestra navigation", () => CheckDMUOrchestra());
         RunGroup("DMU remaining decisions", () => CheckDMURemaining());
+        RunGroup("M12 tether handoff decisions", () => CheckM12Handoff());
+        RunGroup("M12 sphere assignment decisions", () => CheckM12Spheres());
+        RunGroup("M9 Ultrasonic decisions", () => CheckM09Ultrasonic());
+        RunGroup("Observed timing decisions", () => CheckRemainingTiming());
         var assembly = typeof(BossModule).Assembly.Location;
         Console.WriteLine($"PASS {_passed} assertions against production encounter code; assembly {assembly}");
         Console.WriteLine($"SHA256 {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(assembly)))}");
@@ -87,6 +92,10 @@ internal static partial class EncounterChecks
     static partial void CheckDMUPiren();
     static partial void CheckDMUOrchestra();
     static partial void CheckDMURemaining();
+    static partial void CheckM12Handoff();
+    static partial void CheckM12Spheres();
+    static partial void CheckM09Ultrasonic();
+    static partial void CheckRemainingTiming();
 
     private static void RunGroup(string name, Action run)
     {

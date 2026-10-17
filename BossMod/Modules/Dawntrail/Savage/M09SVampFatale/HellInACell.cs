@@ -1,4 +1,4 @@
-﻿namespace BossMod.Dawntrail.Savage.M09SVampFatale;
+namespace BossMod.Dawntrail.Savage.M09SVampFatale;
 
 // draw hints based on hector guide? config file for different strats? let user handle it?
 // if soaked 1st tower, hell awaits status lasts enough to prevent soaking 2nd
@@ -275,122 +275,167 @@ sealed class BloodyBondageUndeadDeathmatch(BossModule module) : Components.CastT
         return lp;
     }
 }
-// add hint on where to stand as tank (middle of long side)
-sealed class UltrasonicSpreadTank(BossModule module) : Components.GenericBaitAway(module, (uint)AID.UltrasonicSpreadTank)
+// Game8: use the widest cage gap for tanks, then usable gaps clockwise for DPS and healers.
+abstract class UltrasonicBaits(BossModule module, AID action, bool spread, bool tanks) : Components.GenericBaitAway(module, (uint)action)
 {
+    private readonly List<WPos> _cells = [];
+    private readonly HashSet<ulong> _participants = [];
+    private DateTime _activation;
+    private Actor? _source;
+    private bool _groupResolved;
+    private static readonly M09SVampFataleConfig _config = Service.Config.Get<M09SVampFataleConfig>();
+
+    private static int Group(Actor actor) => actor.Role == Role.Tank ? 0 : actor.Role == Role.Healer ? 2 : 1;
+    private bool Present(Actor actor) => !actor.IsDead && !actor.IsDestroyed && Raid.FindSlot(actor.InstanceID) >= 0;
+    private bool Participant(Actor actor) => Present(actor) && _participants.Contains(actor.InstanceID);
+    private bool SameGroup(Actor a, Actor b) => a == b || _groupResolved && Participant(a) && Participant(b) && (!spread || Group(a) == Group(b));
+
     public override void OnCastStarted(Actor caster, ActorCastInfo spell)
     {
-        if (spell.Action.ID == (uint)AID.UltrasonicSpreadCast)
+        if (spell.Action.ID != (uint)(spread ? AID.UltrasonicSpreadCast : AID.UltrasonicAmpCast))
+            return;
+        CurrentBaits.Clear();
+        _cells.Clear();
+        _participants.Clear();
+        _source = caster;
+        _activation = Module.CastFinishAt(spell);
+        foreach (var actor in Raid.WithoutSlot(false, true, true))
         {
-            var party = Raid.WithoutSlot(false, true, true);
-            var len = party.Length;
+            // The released party retains roughly half a second of Hell Awaits at the second cast.
+            var status = actor.FindStatus((uint)SID.HellAwaits);
+            if (status == null || status.Value.ExpireAt.AddSeconds(-1) < WorldState.CurrentTime)
+                _participants.Add(actor.InstanceID);
+        }
+        var participants = Raid.WithoutSlot(false, true, true).Where(Participant).ToArray();
+        _groupResolved = participants.Length == 4 && participants.Count(p => p.Role == Role.Tank) == 1
+            && participants.Count(p => p.Role == Role.Healer) == 1 && participants.Count(p => p.Role is Role.Melee or Role.Ranged) == 2;
+        // Once observed, role lanes remain fixed after a death; only surviving original participants may share/re-anchor a bait.
+        foreach (var actor in Raid.WithoutSlot(false, true, true))
+        {
+            if (!Participant(actor) || (tanks ? actor.Role != Role.Tank : actor.Role == Role.Tank))
+                continue;
+            if (CurrentBaits.Any(b => !spread || Group(b.Target) == Group(actor)))
+                continue;
+            CurrentBaits.Add(new(caster, actor, new AOEShapeCone(40f, (tanks ? 50f : 22.5f).Degrees()), _activation));
+        }
+        ObserveCells();
+    }
 
-            for (var i = 0; i < len; ++i)
+    private void ObserveCells()
+    {
+        if (_cells.Count == 4)
+            return;
+        _cells.Clear();
+        foreach (var oid in new[] { OID.CharnelCell, OID.CharnelCell1, OID.CharnelCell2 })
+            foreach (var cell in Module.Enemies((uint)oid))
+                if (!cell.IsDead && !cell.IsDestroyed)
+                    _cells.Add(cell.Position);
+    }
+
+    private Angle? Lane(int group)
+    {
+        if (_source == null || _cells.Count != 4)
+            return null;
+        var angles = _cells.Select(p => (p - _source.Position).ToAngle().Rad).OrderDescending().ToArray();
+        var gaps = new float[4];
+        var widest = 0;
+        for (var i = 0; i < 4; ++i)
+        {
+            gaps[i] = angles[i] - angles[(i + 1) % 4] + (i == 3 ? 2f * MathF.PI : 0f);
+            if (gaps[i] > gaps[widest])
+                widest = i;
+        }
+        if (gaps[widest] < 104f.Degrees().Rad)
+            return null;
+        for (var offset = 0; offset < 4; ++offset)
+        {
+            var i = (widest + offset) % 4;
+            // A 45-degree gap cannot safely hold a 45-degree cone next to a caged player.
+            if (offset != 0 && gaps[i] < 49f.Degrees().Rad)
+                continue;
+            if (group-- == 0)
+                return new Angle(angles[i] - gaps[i] * 0.5f);
+        }
+        return null;
+    }
+
+    private void RefreshBaits()
+    {
+        for (var i = CurrentBaits.Count - 1; i >= 0; --i)
+        {
+            var bait = CurrentBaits[i];
+            if (Participant(bait.Target))
+                continue;
+            var replacement = Raid.WithoutSlot(false, true, true).FirstOrDefault(a => Participant(a) && Group(a) == Group(bait.Target));
+            if (replacement == null)
+                CurrentBaits.RemoveAt(i);
+            else
             {
-                if (party[i].Role == Role.Tank)
-                {
-                    // 1st party has .5s or so of status left when next baits happen
-                    var status = party[i].FindStatus((uint)SID.HellAwaits);
-                    if (status == null || status.Value.ExpireAt.AddSeconds(-1) < WorldState.CurrentTime)
-                    {
-                        CurrentBaits.Add(new(caster, party[i], new AOEShapeCone(40f, 50f.Degrees())));
-                        return;
-                    }
-                }
+                bait.Target = replacement;
+                CurrentBaits[i] = bait;
             }
         }
     }
 
-    public override void OnEventCast(Actor caster, ActorCastEvent spell)
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
-        if (spell.Action.ID == WatchedAction)
+        if (_source == null || !Present(actor))
+            return;
+        RefreshBaits();
+        ObserveCells();
+        var mine = CurrentBaits.Any(b => SameGroup(actor, b.Target));
+        foreach (var bait in CurrentBaits)
         {
-            ++NumCasts;
-            CurrentBaits.Clear();
-        }
-    }
-}
-// TODO: DPS stay together, make it cleaner, maybe separate component to track party slots currently in cells
-// add hint on where to stand if healer/dps
-sealed class UltrasonicSpreadRest(BossModule module) : Components.GenericBaitAway(module, (uint)AID.UltrasonicSpreadRest)
-{
-    private bool _healer;
-    private bool _dps;
-    private readonly AOEShapeCone _cone = new(40f, 22.5f.Degrees());
-    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
-    {
-        if (spell.Action.ID == (uint)AID.UltrasonicSpreadCast)
-        {
-            var party = Raid.WithoutSlot(false, true, true);
-            var len = party.Length;
-
-            for (var i = 0; i < len; ++i)
+            if (SameGroup(actor, bait.Target))
             {
-                var status = party[i].FindStatus((uint)SID.HellAwaits);
-                if (status == null || status.Value.ExpireAt.AddSeconds(-1) < WorldState.CurrentTime)
-                {
-                    if (party[i].Role == Role.Healer && !_healer)
-                    {
-                        CurrentBaits.Add(new(caster, party[i], _cone));
-                        _healer = true;
-                        if (_healer && _dps)
-                            return;
-                    }
-                    else if (party[i].Role is Role.Melee or Role.Ranged && !_dps)
-                    {
-                        CurrentBaits.Add(new(caster, party[i], _cone));
-                        _dps = true;
-                        if (_healer && _dps)
-                            return;
-                    }
-                }
+                var halfAngle = ((AOEShapeCone)bait.Shape).HalfAngle;
+                foreach (var other in Raid.WithoutSlot(false, true, true))
+                    if (!SameGroup(actor, other) && (other.Position - _source.Position).LengthSq() > 1)
+                        hints.AddForbiddenZone(new SDCone(_source.Position, 40f, (other.Position - _source.Position).ToAngle(), halfAngle), _activation);
+                foreach (var cell in _cells)
+                    hints.AddForbiddenZone(new SDCone(_source.Position, 40f, (cell - _source.Position).ToAngle(), halfAngle), _activation);
             }
+            else
+                hints.AddForbiddenZone(bait.Shape, bait.Source.Position, bait.Rotation, _activation);
+        }
+        if (!Participant(actor))
+            return;
+        foreach (var cell in _cells)
+            hints.AddForbiddenZone(new SDCircle(cell, 4f), _activation);
+        if (mine && _groupResolved && _config.EnableTowerOrder && _config.Assignments == M09SVampFataleConfig.AssignmentStrategy.Game8 && Lane(spread ? Group(actor) : 0) is { } lane)
+        {
+            hints.AddForbiddenZone(new SDInvertedCone(_source.Position, 40f, lane, 2f.Degrees()), _activation);
+            hints.AddForbiddenZone(new SDCircle(_source.Position, 3f), _activation);
         }
     }
 
-    public override void OnEventCast(Actor caster, ActorCastEvent spell)
+    public override void AddHints(int slot, Actor actor, TextHints hints)
     {
-        if (spell.Action.ID == WatchedAction)
-        {
-            _healer = false;
-            _dps = false;
-            ++NumCasts;
-            CurrentBaits.Clear();
-        }
-    }
-}
-
-// TODO: stack for non-cell party, bait away from cells, default to tank for now
-// add hint for non-cell party where to stand (middle of long side)
-sealed class UltrasonicAmp(BossModule module) : Components.GenericBaitAway(module, (uint)AID.UltrasonicAmp)
-{
-    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
-    {
-        if (spell.Action.ID == (uint)AID.UltrasonicAmpCast)
-        {
-            var party = Raid.WithoutSlot(false, true, true);
-            var len = party.Length;
-
-            for (var i = 0; i < len; ++i)
+        if (!Present(actor))
+            return;
+        RefreshBaits();
+        foreach (var bait in CurrentBaits)
+            if (SameGroup(actor, bait.Target))
             {
-                if (party[i].Role == Role.Tank)
-                {
-                    if (party[i].FindStatus((uint)SID.HellAwaits) == null)
-                    {
-                        CurrentBaits.Add(new(caster, party[i], new AOEShapeCone(40f, 50f.Degrees())));
-                        return;
-                    }
-                }
+                if (Raid.WithoutSlot(false, true, true).Any(other => !SameGroup(actor, other) && bait.Shape.Check(other.Position, bait.Source.Position, bait.Rotation)))
+                    hints.Add(BaitAwayHint);
             }
-        }
+            else if (bait.Shape.Check(actor.Position, bait.Source.Position, bait.Rotation))
+                hints.Add("GTFO from baited aoe!");
     }
 
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
     {
-        if (spell.Action.ID == WatchedAction)
-        {
-            ++NumCasts;
-            CurrentBaits.Clear();
-        }
+        if (spell.Action.ID != WatchedAction)
+            return;
+        ++NumCasts;
+        CurrentBaits.Clear();
+        _source = null;
+        _cells.Clear();
+        _participants.Clear();
     }
 }
+
+sealed class UltrasonicSpreadTank(BossModule module) : UltrasonicBaits(module, AID.UltrasonicSpreadTank, true, true);
+sealed class UltrasonicSpreadRest(BossModule module) : UltrasonicBaits(module, AID.UltrasonicSpreadRest, true, false);
+sealed class UltrasonicAmp(BossModule module) : UltrasonicBaits(module, AID.UltrasonicAmp, false, true);

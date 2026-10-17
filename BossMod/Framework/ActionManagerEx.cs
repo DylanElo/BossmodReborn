@@ -455,7 +455,7 @@ public sealed unsafe class ActionManagerEx : IDisposable
             return;
         _lastPlannedMchDecision = key;
         _nextPlannedMchDecisionLog = _ws.CurrentTime.AddSeconds(1);
-        Service.Logger.Information($"[MCH planner weave] decision action={action} target={key.Item2:X} allowed={allowed} reason={reason} deadline={AutoQueue.Expire:f3}s requestedLock={actionLock:f3}s nativeGCD={GCD():f3}s nativeLock={EffectiveAnimationLock:f3}s");
+        Service.Logger.Information($"[planner weave] BMR decision action={action} target={key.Item2:X} allowed={allowed} reason={reason} deadline={AutoQueue.Expire:f3}s requestedLock={actionLock:f3}s nativeGCD={GCD():f3}s nativeLock={EffectiveAnimationLock:f3}s");
     }
 
     private Angle? CalculateDesiredOrientation(bool actionImminent)
@@ -553,7 +553,7 @@ public sealed unsafe class ActionManagerEx : IDisposable
                 autoRotateConfig->Value.UInt = SmartRotationTweak.Enabled || AI.AIManager.Instance?.Beh != null ? 0 : autoRotateOriginal;
                 var res = ExecuteAction(actionAdj, targetID, AutoQueue.TargetPos);
                 if (res && AutoQueue.PlannedMchUtility)
-                    Service.Logger.Information($"[MCH planner weave] BMR request accepted action={actionAdj} target={targetID:X} deadline={AutoQueue.Expire:f3}s nativeGCD={GCD():f3}s");
+                    Service.Logger.Information($"[planner weave] BMR request accepted action={actionAdj} target={targetID:X} deadline={AutoQueue.Expire:f3}s nativeGCD={GCD():f3}s");
                 //Service.Log($"[AMEx] Auto-execute {AutoQueue.Source} action {AutoQueue.Action} (=> {actionAdj}) @ {targetID:X} {Utils.Vec3String(AutoQueue.TargetPos)} => {res}");
             }
             else if (status == 0)

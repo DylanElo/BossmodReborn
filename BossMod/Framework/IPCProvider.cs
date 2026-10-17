@@ -556,7 +556,8 @@ sealed class IPCProvider : IDisposable
         Register("ObstacleMap.EvaluateTempMapQuality", obstacles.EvaluateTempMapQuality);
 
         // Cooldown Planner IPC endpoints for external plugin integration (RSR)
-        Register("Plan.MchWeaveHandoffVersion", static () => 1);
+        // Version 1 covers MCH; version 2 also owns native BRD planned utility execution.
+        Register("Plan.MchWeaveHandoffVersion", static () => 2);
         // returns a JSON-serialized array of PlanExecution.PlannedAction entries, resolved along the currently active plan branch
         Register("Plan.GetUpcomingActions", (float lookAheadSeconds) =>
         {

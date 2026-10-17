@@ -1,4 +1,4 @@
-#pragma warning disable IDE0028
+﻿#pragma warning disable IDE0028
 namespace BossMod.Dawntrail.Savage.M12S2Lindwurm;
 
 public enum CloneShape
@@ -74,6 +74,7 @@ abstract class StagingAssignment<TRole>(
 
         if ((OID)actor.OID == OID.Lindschrat && id == 0x1E46 && WatchSpawns)
         {
+            _wurmsOrganized = false;
             WurmClones.Add(new(
                 actor,
                 (actor.Position - Arena.Center).ToAngle(),
@@ -122,7 +123,12 @@ abstract class StagingAssignment<TRole>(
                 var wurm = FindWurmClone(source);
                 if (wurm != null)
                 {
+                    // The fixed tether is authoritative: its holder may differ from the last shape tether.
+                    wurm.Target = WorldState.Actors.Find(targetID);
                     wurm.Locked = true;
+                    for (var i = 0; i < WurmsBySlot.Length; ++i)
+                        if (WurmsBySlot[i] == wurm)
+                            WurmsBySlot[i] = null;
                     WurmsBySlot[slot] = wurm;
                     AssignWurms();
                 }
@@ -148,6 +154,8 @@ abstract class StagingAssignment<TRole>(
 
         if (wurm != null)
         {
+            if (wurm.Shape != shape)
+                _wurmsOrganized = false;
             wurm.Shape = shape.Value;
             wurm.Target = WorldState.Actors.Find(targetID);
             OrganizeWurms();
@@ -156,6 +164,7 @@ abstract class StagingAssignment<TRole>(
 
         if (shape == CloneShape.Boss && source == Module.PrimaryActor)
         {
+            _wurmsOrganized = false;
             WurmClones.Add(new(source, default, -1)
             {
                 Shape = CloneShape.Boss,
@@ -167,6 +176,13 @@ abstract class StagingAssignment<TRole>(
         }
 
         ReportError($"Tether {shape} from untracked actor {source}");
+    }
+
+    public override void OnUntethered(Actor source, in ActorTetherInfo tether)
+    {
+        var wurm = FindWurmClone(source);
+        if (wurm != null && !wurm.Locked && wurm.Target?.InstanceID == tether.Target)
+            wurm.Target = null;
     }
 
     // ============================================================
@@ -254,7 +270,7 @@ abstract class StagingAssignment<TRole>(
 
     private void AssignWurms()
     {
-        if (WurmsAssigned)
+        if (WurmsAssigned || WurmClones.Count != (hasBossTether ? 7 : 8))
             return;
 
         for (var i = 0; i < WurmClones.Count; ++i)
@@ -338,6 +354,69 @@ abstract class StagingAssignment<TRole>(
 
         if (wrongGrab)
             hints.Add("Pass tether!");
+    }
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (slot < 0 || slot >= PlayersBySlot.Length || actor.IsDead || actor.IsDestroyed || WurmsAssigned || !PlayersAssigned || !_wurmsOrganized)
+            return;
+
+        var player = PlayersBySlot[slot];
+        // Partial spawn/shape packets must not route anyone using provisional role assignments.
+        if (player?.WantedRole == null || player.Actor.IsDestroyed || WurmClones.Count != (hasBossTether ? 7 : 8) || WurmClones.Any(w => w.Shape == null))
+            return;
+
+        WurmClone? wanted = null;
+        foreach (var wurm in WurmClones)
+            if (RoleEq(player.WantedRole, wurm.AssignedRole))
+            {
+                wanted = wurm;
+                break;
+            }
+
+        // Once the correct tether is held, stop chasing its moving endpoint; the receiver takes a wrong tether.
+        if (wanted != null && (wanted.Locked || wanted.Actor.IsDestroyed || wanted.Target == null || wanted.Target.IsDead || wanted.Target.IsDestroyed))
+            return;
+
+        List<SDRect> wrongLines = [];
+        foreach (var wurm in WurmClones)
+            if (wurm != wanted && !wurm.Locked && wurm.Target != null && wurm.Target != actor && !wurm.Target.IsDead && !wurm.Target.IsDestroyed && (wurm.Target.Position - wurm.Actor.Position).LengthSq() > 0.01f)
+            {
+                var line = new SDRect(wurm.Actor.Position, wurm.Target.Position, 0.75f);
+                wrongLines.Add(line);
+                hints.AddForbiddenZone(line);
+            }
+
+        if (wanted != null && wanted.Target != actor)
+        {
+            var segment = wanted.Target!.Position - wanted.Actor.Position;
+            var distance = segment.Length();
+            if (distance < 1f)
+                return;
+            var direction = segment / distance;
+            var preferredDistance = Math.Min(2f, distance * 0.5f);
+            // Keep the entire destination clear of unrelated tethers, trying source-side points first.
+            for (var offset = preferredDistance; offset <= distance - 0.5f; offset += 0.5f)
+                if (TryIntercept(offset))
+                    return;
+            for (var offset = preferredDistance - 0.5f; offset >= 0.5f; offset -= 0.5f)
+                if (TryIntercept(offset))
+                    return;
+
+            bool TryIntercept(float offset)
+            {
+                var intercept = wanted.Actor.Position + direction * offset;
+                if (wrongLines.Any(line => line.Distance(intercept) <= 0.8f))
+                    return false;
+                hints.AddForbiddenZone(new SDInvertedCircle(intercept, 0.75f));
+                return true;
+            }
+        }
+        else if (wanted == null && wrongLines.All(line => line.Distance(player.Actor.Position) > 1.3f))
+        {
+            // The no-tether role waits at its clone only when unrelated lines leave that destination clear.
+            hints.AddForbiddenZone(new SDInvertedCircle(player.Actor.Position, 1.25f));
+        }
     }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)

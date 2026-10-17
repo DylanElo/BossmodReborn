@@ -68,15 +68,26 @@ sealed class IdyllicDreamPowerGusherSnakingKick(BossModule module) : Components.
     public bool Visible;
     public bool Risky;
     public bool WatchTeleport;
+    DateTime _portalExit;
 
-    public void Reset(double delay)
+    public void Reset(bool finalReplay)
     {
         NumCasts = 0;
-        var activation = WorldState.FutureTime(delay);
         for (var i = 0; i < _predicted.Count; ++i)
-            _predicted[i] = _predicted[i] with { Activation = activation };
+            _predicted[i] = _predicted[i] with { Activation = ReplayActivation(_predicted[i], finalReplay) };
         for (var i = 0; i < _portaled.Count; ++i)
-            _portaled[i] = _portaled[i] with { Activation = activation };
+            _portaled[i] = _portaled[i] with { Activation = ReplayActivation(_portaled[i], finalReplay) };
+    }
+
+    DateTime ReplayActivation(AOEInstance aoe, bool finalReplay)
+    {
+        // cactbot e79ea7f1: TV7 ends 3444.8, kick 3449.2 / cones 3449.4; final portal exit 3458.6 -> 3464.8.
+        if (finalReplay)
+            return _portalExit != default ? _portalExit.AddSeconds(6.2) : DateTime.MaxValue;
+        var cast = Module.PrimaryActor.CastInfo;
+        return cast?.Action.ID == (uint)AID.TwistedVision
+            ? Module.CastFinishAt(cast, aoe.Shape is AOEShapeCircle ? 4.4f : 4.6f)
+            : DateTime.MaxValue;
     }
 
     public override ReadOnlySpan<AOEInstance> ActiveAOEs(int slot, Actor actor)
@@ -86,7 +97,7 @@ sealed class IdyllicDreamPowerGusherSnakingKick(BossModule module) : Components.
 
         var span = CollectionsMarshal.AsSpan(_predicted);
         for (var i = 0; i < span.Length; ++i)
-            span[i].Risky = Risky;
+            span[i].Risky = Risky && span[i].Activation != DateTime.MaxValue;
         return CollectionsMarshal.AsSpan(_predicted);
     }
 
@@ -105,7 +116,8 @@ sealed class IdyllicDreamPowerGusherSnakingKick(BossModule module) : Components.
                 shape,
                 spell.LocXZ,
                 spell.Rotation,
-                WorldState.FutureTime(29.3d)
+                // Stored replay follows the visual's finish, not its five-second cast start.
+                Module.CastFinishAt(spell, shape is AOEShapeCircle ? 29.1 : 29.3)
             ));
         }
     }
@@ -144,6 +156,8 @@ sealed class IdyllicDreamPowerGusherSnakingKick(BossModule module) : Components.
         }
         else if (aid == (uint)AID.TemporalTearExit)
         {
+            if (_portaled.Count > 0)
+                _portalExit = WorldState.CurrentTime;
             var newPos = spell.TargetXZ;
 
             var span = CollectionsMarshal.AsSpan(_portaled);
@@ -255,6 +269,8 @@ sealed class IdyllicDreamWurmStackSpread : Components.UniformStackSpread
 sealed class IdyllicDreamManaBurstPlayer(BossModule module) : Components.GenericAOEs(module)
 {
     readonly List<AOEInstance> _predicted = [];
+    int _spawnOrder = -1;
+    DateTime _activation = DateTime.MaxValue;
 
     public bool Risky;
 
@@ -266,14 +282,20 @@ sealed class IdyllicDreamManaBurstPlayer(BossModule module) : Components.Generic
 
         var span = CollectionsMarshal.AsSpan(_predicted);
         for (var i = 0; i < span.Length; ++i)
-            span[i].Risky = Risky;
+            span[i].Risky = Risky && span[i].Activation != DateTime.MaxValue;
 
         return CollectionsMarshal.AsSpan(_predicted);
     }
 
     public void Predict(int spawnOrder)
     {
-        Risky = false;
+        if (_spawnOrder != spawnOrder)
+        {
+            Risky = false;
+            _activation = DateTime.MaxValue;
+        }
+        _spawnOrder = spawnOrder;
+        _predicted.Clear();
         var staging = Module.FindComponent<IdyllicDreamStaging>();
         if (staging == null)
         {
@@ -314,13 +336,31 @@ sealed class IdyllicDreamManaBurstPlayer(BossModule module) : Components.Generic
                 new AOEShapeCircle(20f),
                 playerClone.Actor.Position,
                 default,
-                Module.WorldState.FutureTime(10d) // TODO: correct activation timing
+                _activation
             ));
         }
     }
 
+    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
+    {
+        if (_spawnOrder == 0 && caster == Module.PrimaryActor && spell.Action.ID == (uint)AID.Reenactment)
+            SetActivation(Module.CastFinishAt(spell, 3.3f));
+    }
+
+    void SetActivation(DateTime activation)
+    {
+        if (_activation != DateTime.MaxValue)
+            return;
+        _activation = activation;
+        for (var i = 0; i < _predicted.Count; ++i)
+            _predicted[i] = _predicted[i] with { Activation = activation };
+    }
+
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
     {
+        // Replay visual -> damage has a stable offset; earlier staging/placement can vary.
+        if (_spawnOrder == 1 && caster.OID == (uint)OID.Lindschrat && spell.Action.ID == (uint)AID.TemporalTearExit)
+            SetActivation(WorldState.FutureTime(1.2f));
         if (spell.Action.ID != (uint)AID.ManaBurstReplay)
             return;
 
@@ -338,6 +378,15 @@ sealed class IdyllicDreamManaBurstPlayer(BossModule module) : Components.Generic
 
 sealed class IdyllicDreamHeavySlamPlayer(BossModule module) : Components.GenericTowers(module)
 {
+    int _spawnOrder = -1;
+    DateTime _activation = DateTime.MaxValue;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (_activation != DateTime.MaxValue)
+            base.AddAIHints(slot, actor, assignment, hints);
+    }
+
     public override void AddHints(int slot, Actor actor, TextHints hints)
     {
         // intentionally suppress default tower hints
@@ -345,6 +394,10 @@ sealed class IdyllicDreamHeavySlamPlayer(BossModule module) : Components.Generic
 
     public void Predict(int spawnOrder)
     {
+        if (_spawnOrder != spawnOrder)
+            _activation = DateTime.MaxValue;
+        _spawnOrder = spawnOrder;
+        Towers.Clear();
         var staging = Module.FindComponent<IdyllicDreamStaging>();
         if (staging == null)
         {
@@ -386,13 +439,34 @@ sealed class IdyllicDreamHeavySlamPlayer(BossModule module) : Components.Generic
                 5f,
                 2,
                 6,
-                activation: Module.WorldState.FutureTime(10f) // TODO: correct timing
+                activation: _activation
             ));
+        }
+    }
+
+    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
+    {
+        if (_spawnOrder == 0 && caster == Module.PrimaryActor && spell.Action.ID == (uint)AID.Reenactment)
+            SetActivation(Module.CastFinishAt(spell, 3.5f));
+    }
+
+    void SetActivation(DateTime activation)
+    {
+        if (_activation != DateTime.MaxValue)
+            return;
+        _activation = activation;
+        for (var i = 0; i < Towers.Count; ++i)
+        {
+            var tower = Towers[i];
+            tower.Activation = activation;
+            Towers[i] = tower;
         }
     }
 
     public override void OnEventCast(Actor caster, ActorCastEvent spell)
     {
+        if (_spawnOrder == 1 && caster.OID == (uint)OID.Lindschrat && spell.Action.ID == (uint)AID.TemporalTearExit)
+            SetActivation(WorldState.FutureTime(1.4f));
         if (spell.Action.ID != (uint)AID.HeavySlamReplay)
             return;
 

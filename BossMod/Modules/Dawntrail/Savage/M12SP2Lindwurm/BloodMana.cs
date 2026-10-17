@@ -57,6 +57,8 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
     private readonly Shape[] _closeShapes = new Shape[4];
     private int _closeShapeCount;
     private int _closeSide = -1;
+    private readonly Sphere?[] _soakSpheres = new Sphere?[2]; // JP: beta tank north, beta healer and DPS together south.
+    private readonly HashSet<ulong> _spawnedSpheres = [];
 
     enum Letter { None, A, B }
 
@@ -87,6 +89,8 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
 
     private void AddSphere(Actor caster, WPos origin)
     {
+        if (!_spawnedSpheres.Add(caster.InstanceID))
+            return;
         Shape shape;
         switch (caster.OID)
         {
@@ -171,6 +175,14 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
         }
     }
 
+    public override void OnStatusLose(Actor actor, ref ActorStatus status)
+    {
+        var slot = Raid.FindSlot(actor.InstanceID);
+        if (slot >= 0 && ((status.ID == (uint)SID.MutationA && _playerAssignments[slot].L == Letter.A) ||
+            (status.ID == (uint)SID.MutationB && _playerAssignments[slot].L == Letter.B)))
+            _playerAssignments[slot] = default;
+    }
+
     // ============================
     // Sorting
     // ============================
@@ -179,6 +191,7 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
     {
         _closeShapeCount = 0;
         _closeSide = -1;
+        Array.Clear(_soakSpheres);
 
         var span = CollectionsMarshal.AsSpan(Spheres);
 
@@ -203,6 +216,12 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
             if (!foundClose)
                 continue;
 
+            if (_closeSide != -1)
+            {
+                _closeShapeCount = 0;
+                return;
+            }
+
             _closeSide = side;
 
             for (var i = 0; i < span.Length; ++i)
@@ -214,13 +233,27 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
                 if (s.Origin.InCircle(HolePos(side), 8))
                 {
                     s.Order = 0;
-                    _closeShapes[_closeShapeCount++] = s.Shape;
+                    if (_closeShapeCount < _closeShapes.Length)
+                        _closeShapes[_closeShapeCount++] = s.Shape;
                 }
                 else
                 {
                     s.Order = 1;
                 }
             }
+        }
+
+        // Only the paired diamond pattern identifies the rectangular side's spheres to delay.
+        if (_closeShapeCount != 2 || !((_closeShapes[0] == Shape.GreenDonut && _closeShapes[1] == Shape.OrangeBowtie) ||
+            (_closeShapes[1] == Shape.GreenDonut && _closeShapes[0] == Shape.OrangeBowtie) ||
+            (_closeShapes[0] == Shape.BlueSphere && _closeShapes[1] == Shape.PurpleBowtie) ||
+            (_closeShapes[1] == Shape.BlueSphere && _closeShapes[0] == Shape.PurpleBowtie)))
+            return;
+        var candidates = Spheres.Where(s => s.Side != _closeSide && IsCloseShape(s.Shape)).OrderBy(s => s.Origin.Z).ToArray();
+        if (candidates.Length == 2 && candidates[0].Origin.Z < 100 && candidates[1].Origin.Z > 100)
+        {
+            _soakSpheres[0] = candidates[0];
+            _soakSpheres[1] = candidates[1];
         }
     }
 
@@ -233,12 +266,39 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
-        if (SwapDone || _playerAssignments[slot].L != Letter.B || _playerAssignments[slot].Expire <= WorldState.CurrentTime)
+        if (SwapDone || slot < 0 || slot >= _playerAssignments.Length || _playerAssignments[slot].Expire <= WorldState.CurrentTime)
             return;
 
+        var assigned = AssignedSphere(slot, actor);
+        if (assigned != null)
+            hints.GoalZones.Add(AIHints.GoalSingleTarget(assigned.Actor.Position, 2f));
         foreach (var sphere in Spheres)
-            if (sphere.Order == 0 && sphere.Side != _closeSide && IsCloseShape(sphere.Shape))
-                hints.GoalZones.Add(AIHints.GoalSingleTarget(sphere.Actor.Position, 2f));
+            if (sphere != assigned && _playerAssignments[slot].L != Letter.None)
+                hints.AddForbiddenZone(new SDCircle(sphere.Actor.Position, 2f));
+    }
+
+    private Sphere? AssignedSphere(int slot, Actor actor)
+    {
+        if (SwapDone || _playerAssignments[slot].L != Letter.B || _playerAssignments[slot].Expire <= WorldState.CurrentTime)
+            return null;
+        var beta = 0;
+        var tanks = 0;
+        var healers = 0;
+        for (var i = 0; i < 8; ++i)
+        {
+            if (Raid[i] is not { IsDead: false, IsDestroyed: false } player || player.Role == Role.None ||
+                _playerAssignments[i].L == Letter.None || _playerAssignments[i].Expire <= WorldState.CurrentTime)
+                return null;
+            if (_playerAssignments[i].L != Letter.B)
+                continue;
+            ++beta;
+            if (player.Role == Role.Tank) ++tanks;
+            if (player.Role == Role.Healer) ++healers;
+        }
+        if (beta != 4 || tanks != 1 || healers != 1)
+            return null;
+        var sphere = _soakSpheres[actor.Role == Role.Tank ? 0 : 1];
+        return sphere is { Order: 0, Actor.IsDestroyed: false } && Spheres.Contains(sphere) ? sphere : null;
     }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc)
@@ -269,10 +329,7 @@ sealed class ManaSphere(BossModule module) : BossComponent(module)
             if (shape is AOEShapeCone)
                 shape.Draw(Arena, sphere.Actor.Position, 180f.Degrees(), color);
 
-            if (_playerAssignments[pcSlot].L == Letter.B &&
-                sphere.Order == 0 &&
-                sphere.Side != _closeSide &&
-                IsCloseShape(sphere.Shape))
+            if (pcSlot >= 0 && pcSlot < _playerAssignments.Length && sphere == AssignedSphere(pcSlot, pc))
             {
                 Arena.ZoneCircleOutline(sphere.Actor.Position, 2, Colors.Safe);
             }

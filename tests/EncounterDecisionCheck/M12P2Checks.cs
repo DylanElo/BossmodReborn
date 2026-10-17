@@ -57,15 +57,19 @@ internal static partial class EncounterChecks
         P2Field(stored, "Risky", true);
         P2Field(stored, "WatchTeleport", true);
         f.Advance(140);
-        stored.GetType().GetMethod("Reset")!.Invoke(stored, [8.5d]);
+        f.StartCast(f.Boss, (uint)M12P2.AID.TwistedVision, 4);
+        stored.GetType().GetMethod("Reset")!.Invoke(stored, [false]);
         var hints = f.Hints(stored, 0);
-        Check(hints.ForbiddenZones.All(z => Math.Abs((z.activation - f.Now).TotalSeconds - 8.5) < 0.001),
+        Check(hints.ForbiddenZones.All(z => Math.Abs((z.activation - f.Now).TotalSeconds - 8.7) < 0.001),
             "M12P2 stored AOEs: replay reschedules AI deadlines instead of retaining first-preview timestamp");
         f.EventCast(clone, (uint)M12P2.AID.IdyllicDreamSnakingKick);
         Check(stored.ActiveAOEs(0, player).Length == 1 && stored.ActiveAOEs(0, player)[0].Origin == later.Position,
             "M12P2 stored AOEs: one clone resolution preserves the other stored clone for final replay");
-        stored.GetType().GetMethod("Reset")!.Invoke(stored, [4.8d]);
-        Check(f.Hints(stored, 0).ForbiddenZones.All(z => Math.Abs((z.activation - f.Now).TotalSeconds - 4.8) < 0.001),
+        f.EventCast(later, (uint)M12P2.AID.TemporalTearEnter);
+        TimingEvent(f, later, (uint)M12P2.AID.TemporalTearExit, later.Position);
+        f.Advance(2.2);
+        stored.GetType().GetMethod("Reset")!.Invoke(stored, [true]);
+        Check(f.Hints(stored, 0).ForbiddenZones.All(z => Math.Abs((z.activation - f.Now).TotalSeconds - 4) < 0.001),
             "M12P2 stored AOEs: final replay has a fresh final-wave deadline");
         f.EventCast(later, (uint)M12P2.AID.IdyllicDreamSnakingKick);
         Check(f.Hints(stored, 0).ForbiddenZones.Count == 0, "M12P2 stored AOEs: actual final resolution clears all avoidance");
@@ -90,7 +94,7 @@ internal static partial class EncounterChecks
         }
         foreach (var (state, count, wait, expected, deadline) in new[]
         {
-            (0x30322u, 5, 3.6, 0x30330u, 8.5), (0x30351u, 9, 6.6, 0x30352u, 4.8)
+            (0x30322u, 5, 3.6, 0x30330u, 8.7), (0x30351u, 9, 6.6, 0x30352u, 4.8)
         })
         {
             using var f = new Fixture("M12S2TheLindwurm");
@@ -104,6 +108,13 @@ internal static partial class EncounterChecks
             f.StartCast(clone, (uint)M12P2.AID.SnakingKickCastFirst, 5);
             f.Advance(wait);
             Check(f.Module.StateMachine.ActiveState?.ID == state, $"M12P2 replay {state:X}: timer alone waits for actual replay effects");
+            if (state == 0x30351)
+            {
+                P2Field(stored, "WatchTeleport", true);
+                f.EventCast(clone, (uint)M12P2.AID.TemporalTearEnter);
+                TimingEvent(f, clone, (uint)M12P2.AID.TemporalTearExit, clone.Position);
+                f.Advance(1.4);
+            }
             for (var i = 0; i < count; ++i) f.EventCast(f.Boss, (uint)M12P2.AID.HeavySlamReplay);
             f.Advance(0);
             Check(f.Module.StateMachine.ActiveState?.ID == expected, $"M12P2 replay {state:X}: production event counter tolerates batched wave overshoot");
@@ -303,15 +314,14 @@ internal static partial class EncounterChecks
                 0, 0, 1, new Vector3(positions[index].X, 0, positions[index].Z), 0, 0, default)));
         }
         var hints = f.Hints(mana, 0);
-        Check(hints.GoalZones.Count == 2 && NavigationGoal(hints, positions[4]) > NavigationGoal(hints, positions[0]) &&
-            NavigationGoal(hints, positions[5]) > NavigationGoal(hints, positions[6]),
-            "M12P2 BloodMana: actual beta status and eight sphere events prefer opposite-side matching close shapes");
+        Check(hints.GoalZones.Count == 0,
+            "M12P2 BloodMana: incomplete party and ambiguous sphere pair cannot invent a role assignment");
         Check(f.Hints(mana, 1).GoalZones.Count == 0, "M12P2 BloodMana: alpha status never receives beta soak destination");
         f.World.Execute(new ActorState.OpMove(beta.InstanceID, new Vector4(positions[4].X, 0, positions[4].Z, 0)));
         f.EventCast(f.Boss, (uint)M12P2.AID.BloodyBurst, beta.InstanceID);
         hints = f.Hints(mana, 0);
-        Check(hints.GoalZones.Count == 1 && NavigationGoal(hints, positions[4]) == 0 && NavigationGoal(hints, positions[5]) > 0,
-            "M12P2 BloodMana: actual soak effect releases consumed sphere while preserving remaining eligible shape");
+        Check(hints.GoalZones.Count == 0,
+            "M12P2 BloodMana: incomplete party cannot chase a remaining sphere after a soak");
         f.Status(beta, 0, new((uint)M12P2.SID.MutatingCells, 0, f.Now.AddSeconds(5), 0));
         Check(f.Hints(mana, 0).GoalZones.Count == 0, "M12P2 BloodMana: observed debuff swap releases pre-swap soak routing");
     }
@@ -346,16 +356,19 @@ internal static partial class EncounterChecks
         predict.Invoke(replay, [0]);
         Check(replay.ActiveAOEs(0, player).Length == 1 && f.Hints(replay, 1).ForbiddenZones.Count == 0,
             "M12P2 player clone replay: actual first-wave assignments preview without premature avoidance");
+        f.StartCast(f.Boss, (uint)M12P2.AID.Reenactment, 3);
         P2Field(replay, "Risky", true);
         Check(f.Hints(replay, 1).ForbiddenZones.Count == 1, "M12P2 player clone replay: enabled first-wave risk reaches AI avoidance");
         var helper = f.AddActor(0x340, 0x233C, ActorType.Enemy, Class.None, understudies[0].Position);
         f.EventCast(helper, (uint)M12P2.AID.ManaBurstReplay, player.InstanceID);
         Check(replay.ActiveAOEs(0, player).Length == 0, "M12P2 player clone replay: actual first effect clears its prediction");
+        f.FinishCast(f.Boss);
         for (var slot = 0; slot < 2; ++slot)
             f.World.Execute(new ActorState.OpTether(understudies[4 + slot].InstanceID, new((uint)M12P2.TetherID.Fixed, f.World.Party[slot]!.InstanceID)));
         predict.Invoke(replay, [1]);
         Check(replay.ActiveAOEs(0, player).Length == 1 && f.Hints(replay, 1).ForbiddenZones.Count == 0,
             "M12P2 player clone replay: new second-wave assignments reset inherited risk while platforms remain split");
+        f.EventCast(clones[0], (uint)M12P2.AID.TemporalTearExit);
         P2Field(replay, "Risky", true);
         Check(f.Hints(replay, 1).ForbiddenZones.Count == 1, "M12P2 player clone replay: second platform-disappear risk gate re-enables avoidance");
     }

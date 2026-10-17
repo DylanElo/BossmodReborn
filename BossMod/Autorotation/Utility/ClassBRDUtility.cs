@@ -37,8 +37,12 @@ public sealed class ClassBRDUtility(RotationModuleManager manager, Actor player)
     public override void Execute(StrategyValues strategy, Actor? primaryTarget, float estimatedAnimLockDelay, bool isMoving)
     {
         ExecuteShared(strategy, IDLimitBreak3, primaryTarget);
-        ExecuteSimple(strategy.Option(Track.WardensPaean), BRD.AID.WardensPaean, ResolveTarget(strategy.Option(Track.WardensPaean).Value) ?? primaryTarget ?? Player);
-        ExecuteSimple(strategy.Option(Track.NaturesMinne), BRD.AID.NaturesMinne, Player);
+        var wardens = strategy.Option(Track.WardensPaean);
+        if (wardens.As<SimpleOption>() == SimpleOption.Use)
+            PushPlannedUtility(wardens, BRD.AID.WardensPaean, ResolveTarget(wardens.Value) ?? primaryTarget ?? Player);
+        var minne = strategy.Option(Track.NaturesMinne);
+        if (minne.As<SimpleOption>() == SimpleOption.Use)
+            PushPlannedUtility(minne, BRD.AID.NaturesMinne, ResolveTarget(minne.Value) ?? Player);
 
         // TODO: for 'if-not-active' strategy, add configurable min-time-left
         // TODO: combine 87/88 options
@@ -50,6 +54,13 @@ public sealed class ClassBRDUtility(RotationModuleManager manager, Actor player)
             _ => false
         };
         if (wantTroub)
-            Hints.ActionsToExecute.Push(ActionID.MakeSpell(BRD.AID.Troubadour), Player, troub.Priority(), troub.Value.ExpireIn);
+            PushPlannedUtility(troub, BRD.AID.Troubadour, Player);
+    }
+
+    private void PushPlannedUtility(in StrategyValues.OptionRef option, BRD.AID action, Actor? target)
+    {
+        // Share the existing RSR handoff; presets and defaults retain native execution.
+        var planned = Manager.Preset == null && Manager.Planner?.Plan != null && float.IsFinite(option.Value.ExpireIn) && option.Value.ExpireIn < float.MaxValue;
+        Hints.ActionsToExecute.Push(ActionID.MakeSpell(action), target, option.Priority(), option.Value.ExpireIn, plannedMchUtility: planned);
     }
 }

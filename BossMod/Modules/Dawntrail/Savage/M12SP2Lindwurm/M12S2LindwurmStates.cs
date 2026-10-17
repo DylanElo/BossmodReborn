@@ -280,7 +280,7 @@ class M12S2LindwurmStates : StateMachineBuilder
             .ExecOnEnter<IdyllicDreamPowerGusherSnakingKick>(static comp =>
             {
                 comp.Visible = true;
-                comp.Reset(8.5);
+                comp.Reset(false);
             });
         ComponentCondition<IdyllicDreamArena>(id + 0x332u, 1.3f, static comp => comp.State == 1, "Platforms appear");
 
@@ -299,7 +299,7 @@ class M12S2LindwurmStates : StateMachineBuilder
             .ExecOnExit<IdyllicDreamPowerGusherSnakingKick>(static comp =>
             {
                 comp.Visible = true;
-                comp.Reset(4.8);
+                comp.Reset(true);
             });
 
         ComponentCondition<IdyllicDreamPowerGusherSnakingKick>(id + 0x352u, 4.8f, static comp => comp.NumCasts > 0, "Stored AOE")

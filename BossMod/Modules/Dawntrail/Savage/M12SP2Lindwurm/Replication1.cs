@@ -378,11 +378,36 @@ class MightyMagicTopTierSlamSecondBait(BossModule module)
 
     readonly List<Source> _sources = [];
 
+    DateTime _fireActivation = DateTime.MaxValue;
+    DateTime _darkActivation = DateTime.MaxValue;
+
     public int NumFire;
     public int NumDark;
 
     BitMask _fireVuln;
     BitMask _darkVuln;
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        if (_sources.Any(s => s.Activation != DateTime.MaxValue))
+            base.AddAIHints(slot, actor, assignment, hints);
+    }
+
+    public override void OnCastStarted(Actor caster, ActorCastInfo spell)
+    {
+        if (spell.Action.ID is (uint)AID.TopTierSlamCast or (uint)AID.MightyMagicCast)
+        {
+            var stack = spell.Action.ID == (uint)AID.TopTierSlamCast;
+            var activation = Module.CastFinishAt(spell, 1);
+            if (stack)
+                _fireActivation = activation;
+            else
+                _darkActivation = activation;
+            for (var i = 0; i < _sources.Count; ++i)
+                if (_sources[i].Stack == stack)
+                    _sources[i] = _sources[i] with { Activation = activation };
+        }
+    }
 
     public override void Update()
     {
@@ -471,6 +496,15 @@ class MightyMagicTopTierSlamSecondBait(BossModule module)
     {
         switch ((AID)spell.Action.ID)
         {
+            case AID.SnakingKick:
+                if (caster != Module.PrimaryActor || _fireActivation != DateTime.MaxValue)
+                    break;
+                // cactbot e79ea7f1: cleave 3045.3, fire 3061.0, dark 3062.1; dash groups are a second apart.
+                _fireActivation = WorldState.FutureTime(15.7);
+                _darkActivation = WorldState.FutureTime(16.8);
+                for (var i = 0; i < _sources.Count; ++i)
+                    _sources[i] = _sources[i] with { Activation = _sources[i].Stack ? _fireActivation : _darkActivation };
+                break;
             case AID.Dash:
                 {
                     var clones = CollectionsMarshal.AsSpan(_rep1Bait.Clones);
@@ -481,7 +515,12 @@ class MightyMagicTopTierSlamSecondBait(BossModule module)
                         if (clone.Actor == caster && clone.Element != Replication1SecondBait.Assignment.None)
                         {
                             var isStack = clone.Element == Replication1SecondBait.Assignment.Fire;
-                            _sources.Add(new(spell.TargetXZ, isStack, WorldState.FutureTime(10))); // FIXME timing
+                            var source = new Source(spell.TargetXZ, isStack, isStack ? _fireActivation : _darkActivation);
+                            var index = _sources.FindIndex(s => s.Position == source.Position && s.Stack == source.Stack);
+                            if (index < 0)
+                                _sources.Add(source);
+                            else
+                                _sources[index] = source;
                             break;
                         }
                     }

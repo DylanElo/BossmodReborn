@@ -20,6 +20,7 @@ public sealed class ActionQueue
         public readonly Angle? FacingAngle = facingAngle;
         public readonly bool Manual = manual;
         public readonly bool Force = force;
+        // The legacy name is retained for the shared BRD/MCH planner weave handoff.
         public readonly bool PlannedMchUtility = plannedMchUtility;
     }
 
