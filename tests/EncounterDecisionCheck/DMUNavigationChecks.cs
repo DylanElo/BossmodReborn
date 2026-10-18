@@ -5,11 +5,11 @@ internal static partial class EncounterChecks
 {
     static partial void CheckDMUNavigation()
     {
-        RunGroup("DMU teleport", CheckTeleTrouncingNavigation);
+        // P1 teleport / Yarn melee-inner / Yarn gravity groups retired with the 2026-10-18 upstream merge: upstream rewrote DMU P1
+        // (P1*.cs) and no longer has our Phase1 components or Yarn P1 routes. CheckTeleTrouncingNavigation, CheckYarnMeleeInnerNavigation
+        // and CheckYarnGravitasNavigation below are kept as the spec if those routes are ported to the new P1 classes.
         RunGroup("DMU EU boss split", () => CheckDecisiveBattleNavigation());
         RunGroup("DMU Yarn boss split", () => CheckDecisiveBattleNavigation(true));
-        RunGroup("DMU Yarn melee inner", CheckYarnMeleeInnerNavigation);
-        RunGroup("DMU Yarn gravity", CheckYarnGravitasNavigation);
         RunGroup("DMU forked water", CheckForkedWaterNavigation);
         foreach (var rotation in new[] { 0, 90, 180, 270 })
         {
