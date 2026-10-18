@@ -62,6 +62,10 @@ public sealed class DMUConfig : ConfigNode {
 
         [PropertyDisplay("LPDU - Uptime Graven Image 2")]
         GravenImage2LPDUUptime,
+
+        // Saved configs from before upstream's P1 rewrite: without these the whole DMUConfig node fails to load and resets (Yarn flag included).
+        GravenImage2Uptime = GravenImage2LPDUUptime,
+        GravenImage2Normal = GravenImage2LPDUUptime,
     }
 
     [PropertyDisplay("P1 Graven Image 2 strategy")]
