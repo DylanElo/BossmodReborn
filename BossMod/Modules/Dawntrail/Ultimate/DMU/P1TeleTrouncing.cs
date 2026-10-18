@@ -52,7 +52,7 @@ sealed class TeleTrouncing : Components.GenericAOEs {
             return;
         }
 
-        if (!P1TeleTrouncingData.TryGetSafeSpots(dmuConfig.P1TeleTrouncing, firstArrow.direction, secondArrow.direction, out var safeSpots)) {
+        if (!P1TeleTrouncingData.TryGetSafeSpots(dmuConfig.TeleTrouncingStrategy(), firstArrow.direction, secondArrow.direction, out var safeSpots)) {
             return;
         }
 
@@ -106,7 +106,7 @@ sealed class TeleTrouncing : Components.GenericAOEs {
     }
 
     public override void DrawArenaForeground(int pcSlot, Actor pc) {
-        if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
+        if (dmuConfig.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
             return;
         }
 
@@ -136,7 +136,7 @@ sealed class TeleTrouncing : Components.GenericAOEs {
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints) {
         base.AddAIHints(slot, actor, assignment, hints);
 
-        if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
+        if (dmuConfig.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
             return;
         }
 
@@ -196,14 +196,25 @@ sealed class TeleTrouncingTethers(BossModule module) : Components.UniformStackSp
         }
     }
 
+    // Yarn uses its own fixed spots (melee inner, ranged/healers outer corners); everything else follows the picked strategy.
+    private WPos TetherSafeSpot(PartyRolesConfig.Assignment assignment) {
+        if (dmuConfig.YarnPirenStrategy) {
+            var offset = DMUConfig.YarnSpreadOffset(assignment);
+            return offset == default ? default : Module.Center + offset;
+        }
+
+        P1TeleTrouncingTethersData.TryGetSafeSpots(dmuConfig.TeleTrouncingStrategy(), assignment, dmuConfig.P1TeleTrouncingStaticSpots, supportHasSleep.GetValueOrDefault(), out var safeSpot);
+        return safeSpot;
+    }
+
     public override void DrawArenaForeground(int pcSlot, Actor pc) {
         base.DrawArenaForeground(pcSlot, pc);
 
-        if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
+        if (dmuConfig.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
             return;
         }
 
-        if (!dmuConfig.P1TeleTrouncingStaticSpots && supportHasSleep == null) {
+        if (!dmuConfig.YarnPirenStrategy && !dmuConfig.P1TeleTrouncingStaticSpots && supportHasSleep == null) {
             return;
         }
 
@@ -213,8 +224,7 @@ sealed class TeleTrouncingTethers(BossModule module) : Components.UniformStackSp
         }
         var assignment = partyConfig[Raid.Members[pcSlot].ContentId];
 
-        WPos safeSpot = default;
-        P1TeleTrouncingTethersData.TryGetSafeSpots(dmuConfig.P1TeleTrouncing, assignment, dmuConfig.P1TeleTrouncingStaticSpots, supportHasSleep.GetValueOrDefault(), out safeSpot);
+        var safeSpot = TetherSafeSpot(assignment);
         if (safeSpot == default) {
             return;
         }
@@ -227,11 +237,11 @@ sealed class TeleTrouncingTethers(BossModule module) : Components.UniformStackSp
     }
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints) {
-        if (dmuConfig.P1TeleTrouncing == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
+        if (dmuConfig.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone) {
             return;
         }
 
-        if (!dmuConfig.P1TeleTrouncingStaticSpots && supportHasSleep == null) {
+        if (!dmuConfig.YarnPirenStrategy && !dmuConfig.P1TeleTrouncingStaticSpots && supportHasSleep == null) {
             return;
         }
 
@@ -240,8 +250,7 @@ sealed class TeleTrouncingTethers(BossModule module) : Components.UniformStackSp
             return;
         }
 
-        WPos safeSpot = default;
-        P1TeleTrouncingTethersData.TryGetSafeSpots(dmuConfig.P1TeleTrouncing, assignment, dmuConfig.P1TeleTrouncingStaticSpots, supportHasSleep.GetValueOrDefault(), out safeSpot);
+        var safeSpot = TetherSafeSpot(assignment);
         if (safeSpot == default) {
             return;
         }

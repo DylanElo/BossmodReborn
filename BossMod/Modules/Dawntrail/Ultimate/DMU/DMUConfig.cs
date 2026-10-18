@@ -9,6 +9,23 @@ public sealed class DMUConfig : ConfigNode {
     [PropertyDisplay("Yarn Flash / Piren (JP): melee inner, healer-first priority, wind eight-player tank LB")]
     public bool YarnPirenStrategy = false;
 
+    // Yarn Flash / Piren (JP) always plays Modified Xolo arrows; "None" still disables the hints.
+    public P1TeleTrouncingStrategy TeleTrouncingStrategy()
+        => YarnPirenStrategy && P1TeleTrouncing != P1TeleTrouncingStrategy.TeleTrouncingNone ? P1TeleTrouncingStrategy.Modified_Xolo : P1TeleTrouncing;
+
+    // Yarn sleep/confusion spreads: melee inner, ranged and healers in the outer corners (offsets from arena centre; include the spread's 1y margin).
+    public static WDir YarnSpreadOffset(PartyRolesConfig.Assignment a) => a switch {
+        PartyRolesConfig.Assignment.MT => new(-4.5f, -4.5f),
+        PartyRolesConfig.Assignment.OT => new(4.5f, -4.5f),
+        PartyRolesConfig.Assignment.M1 => new(-4.5f, 4.5f),
+        PartyRolesConfig.Assignment.M2 => new(4.5f, 4.5f),
+        PartyRolesConfig.Assignment.R1 => new(-10.5f, -10.5f),
+        PartyRolesConfig.Assignment.R2 => new(10.5f, -10.5f),
+        PartyRolesConfig.Assignment.H1 => new(-10.5f, 10.5f),
+        PartyRolesConfig.Assignment.H2 => new(10.5f, 10.5f),
+        _ => default
+    };
+
     public enum P1GravenImage1Strategy {
         [PropertyDisplay("None")]
         GravenImage1None,

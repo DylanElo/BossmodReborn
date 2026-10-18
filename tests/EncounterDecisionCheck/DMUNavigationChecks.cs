@@ -5,9 +5,10 @@ internal static partial class EncounterChecks
 {
     static partial void CheckDMUNavigation()
     {
-        // P1 teleport / Yarn melee-inner / Yarn gravity groups retired with the 2026-10-18 upstream merge: upstream rewrote DMU P1
-        // (P1*.cs) and no longer has our Phase1 components or Yarn P1 routes. CheckTeleTrouncingNavigation, CheckYarnMeleeInnerNavigation
-        // and CheckYarnGravitasNavigation below are kept as the spec if those routes are ported to the new P1 classes.
+        RunGroup("DMU teleport", CheckTeleTrouncingNavigation);
+        RunGroup("DMU Yarn teleport strategy", CheckYarnTeleStrategy);
+        RunGroup("DMU Yarn melee inner", CheckYarnMeleeInnerNavigation);
+        RunGroup("DMU Yarn gravity", CheckYarnGravitasNavigation);
         RunGroup("DMU EU boss split", () => CheckDecisiveBattleNavigation());
         RunGroup("DMU Yarn boss split", () => CheckDecisiveBattleNavigation(true));
         RunGroup("DMU forked water", CheckForkedWaterNavigation);
@@ -37,7 +38,7 @@ internal static partial class EncounterChecks
 
     private static void CheckTeleTrouncingNavigation()
     {
-        foreach (var strategy in Enum.GetValues<DMUConfig.P1TeleTrouncingStrategy>())
+        foreach (var strategy in Enum.GetValues<DMUConfig.P1TeleTrouncingStrategy>().Where(x => x != DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone))
         {
             Service.Config.Get<DMUConfig>().P1TeleTrouncing = strategy;
             using var f = new Fixture("DMU");
@@ -92,33 +93,61 @@ internal static partial class EncounterChecks
         Service.Config.Get<DMUConfig>().YarnPirenStrategy = false;
     }
 
+    private static void CheckYarnTeleStrategy()
+    {
+        var config = Service.Config.Get<DMUConfig>();
+        config.P1TeleTrouncing = DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow;
+        config.YarnPirenStrategy = true;
+        Check(config.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo, "DMU Yarn: P1 arrows always use Modified Xolo");
+        config.P1TeleTrouncing = DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone;
+        Check(config.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.TeleTrouncingNone, "DMU Yarn: None still disables the arrow hints");
+        config.YarnPirenStrategy = false;
+        config.P1TeleTrouncing = DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow;
+        Check(config.TeleTrouncingStrategy() == DMUConfig.P1TeleTrouncingStrategy.Freaky_Arrow, "DMU non-Yarn: picked arrow strategy is kept");
+        config.P1TeleTrouncing = DMUConfig.P1TeleTrouncingStrategy.Modified_Xolo;
+    }
+
     private static void CheckYarnMeleeInnerNavigation()
     {
-        Service.Config.Get<DMUConfig>().YarnPirenStrategy = true;
-        using var f = new Fixture("DMU");
-        DMUParty(f);
-        var component = f.Activate("BossMod.Dawntrail.Ultimate.DMU.GravenImage3");
-        WPos[] expected = [new(95.5f, 95.5f), new(104.5f, 95.5f), new(89.5f, 110.5f), new(110.5f, 110.5f), new(95.5f, 104.5f), new(104.5f, 104.5f), new(89.5f, 89.5f), new(110.5f, 89.5f)];
-        // Feed actual statue tethers, including every support sleep target; all four spreads coexist.
-        for (var i = 0; i < 4; ++i)
+        var expected = new WPos[] { new(95.5f, 95.5f), new(104.5f, 95.5f), new(89.5f, 110.5f), new(110.5f, 110.5f), new(95.5f, 104.5f), new(104.5f, 104.5f), new(89.5f, 89.5f), new(110.5f, 89.5f) };
+        foreach (var yarn in new[] { true, false })
         {
-            var statue = f.AddActor((ulong)(0x400 + i), 0x4C31, ActorType.Enemy, Class.None, new(107, 43));
-            f.World.Execute(new ActorState.OpTether(statue.InstanceID, new(45, f.World.Party[i]!.InstanceID)));
+            Service.Config.Get<DMUConfig>().YarnPirenStrategy = yarn;
+            using var f = new Fixture("DMU");
+            DMUParty(f);
+            f.Activate("BossMod.Dawntrail.Ultimate.DMU.DoubleTroubleTrapStacksTeleTrouncing");
+            var component = f.Activate("BossMod.Dawntrail.Ultimate.DMU.TeleTrouncingTethers");
+            Check(f.Hints(component, 0, PartyRolesConfig.Assignment.MT).ForbiddenZones.Count == 0, "DMU Yarn melee-inner: no route before the sleep tethers are observed");
+            // Actual statue tethers on every support sleep target.
+            for (var i = 0; i < 4; ++i)
+            {
+                var statue = f.AddActor((ulong)(0x400 + i), 0x4C31, ActorType.Enemy, Class.None, new(107, 43));
+                f.World.Execute(new ActorState.OpTether(statue.InstanceID, new(45, f.World.Party[i]!.InstanceID)));
+            }
+            for (var i = 0; i < 8; ++i)
+            {
+                var assignment = (PartyRolesConfig.Assignment)i;
+                var zones = f.Hints(component, i, assignment).ForbiddenZones;
+                if (yarn)
+                {
+                    Check(zones.Count == 1 && zones[0].shapeDistance.Distance(expected[i]) >= 0 && zones[0].shapeDistance.Distance(new(100, 100)) < 0,
+                        $"DMU Yarn melee-inner: actual {assignment} route is its fixed spread spot");
+                    var ring = i is 0 or 1 or 4 or 5 ? 7f : 15f;
+                    Check((expected[i] - f.Module.Center).Length() < ring, $"DMU Yarn melee-inner: {assignment} stays in selected ring");
+                }
+                else
+                {
+                    Check(zones.Count == 1 && zones[0].shapeDistance.Distance(expected[i]) < 0, $"DMU non-Yarn: {assignment} does not use the Yarn spread spot");
+                }
+            }
+            Check(f.Hints(component, 0, PartyRolesConfig.Assignment.Unassigned).ForbiddenZones.Count == 0, "DMU melee-inner: unassigned role does not guess a spot");
+            if (!yarn)
+                continue;
+            // Sleep landing releases the route.
+            for (var i = 0; i < 4; ++i)
+                f.Status(f.World.Party[i]!, 0, new(4894, 0, f.Now.AddSeconds(30), 0));
+            Check(f.Hints(component, 0, PartyRolesConfig.Assignment.MT).ForbiddenZones.Count == 0, "DMU Yarn melee-inner: sleep debuff releases route");
         }
-        for (var i = 0; i < 8; ++i)
-        {
-            var assignment = (PartyRolesConfig.Assignment)i;
-            var hints = f.ModuleHints(i, assignment);
-            Check(hints.ForbiddenZones.Count > 0 && hints.ForbiddenZones.All(z => z.shapeDistance.Distance(expected[i]) >= 0),
-                $"DMU Yarn melee-inner: actual {assignment} route survives all live sleep-spread hazards");
-            var ring = i is 0 or 1 or 4 or 5 ? 7f : 15f;
-            Check((expected[i] - f.Module.Center).Length() < ring, $"DMU Yarn melee-inner: {assignment} stays in selected ring");
-        }
-        var unknown = f.Hints(component, 0, PartyRolesConfig.Assignment.Unassigned);
-        Check(unknown.ForbiddenZones.Any(z => z.shapeDistance.Distance(new(100, 100)) < 0) && !unknown.ForbiddenZones.Any(z => z.shapeDistance is SDInvertedUnion),
-            "DMU Yarn melee-inner: unknown role retains other-spread safety without assigned route");
-        f.EventCast(f.Boss, 47798);
-        Check(f.Hints(component, 0).ForbiddenZones.Count == 0, "DMU Yarn melee-inner: actual spread resolution releases route");
         Service.Config.Get<DMUConfig>().YarnPirenStrategy = false;
     }
 
@@ -175,20 +204,26 @@ internal static partial class EncounterChecks
 
     private static void CheckYarnGravitasNavigation()
     {
-        Service.Config.Get<DMUConfig>().YarnPirenStrategy = true;
-        using var f = new Fixture("DMU");
-        DMUParty(f);
-        var component = f.Activate("BossMod.Dawntrail.Ultimate.DMU.Gravitas");
-        for (var i = 0; i < 4; ++i)
+        foreach (var yarn in new[] { true, false })
         {
-            var statue = f.AddActor((ulong)(0x500 + i), 0x4C31, ActorType.Enemy, Class.None, new(102.5f, 22.5f));
-            f.World.Execute(new ActorState.OpTether(statue.InstanceID, new(45, f.World.Party[i]!.InstanceID)));
-        }
-        for (var i = 0; i < 8; ++i)
-        {
-            var zones = f.ModuleHints(i, (PartyRolesConfig.Assignment)i).ForbiddenZones;
-            Check(zones.Count > 0 && zones.All(z => z.shapeDistance.Distance(new(100, 112.5f)) >= 0) && zones[^1].shapeDistance.Distance(new(100, 87.5f)) < 0,
-                $"DMU Yarn gravity: actual first south puddle route survives inherited stacks for slot{i}");
+            Service.Config.Get<DMUConfig>().YarnPirenStrategy = yarn;
+            using var f = new Fixture("DMU");
+            DMUParty(f);
+            var component = f.Activate("BossMod.Dawntrail.Ultimate.DMU.Gravitas");
+            component.GetType().GetField("side")!.SetValue(component, P1GravitasData.Side.NORTH);
+            for (var i = 0; i < 4; ++i)
+            {
+                var statue = f.AddActor((ulong)(0x500 + i), 0x4C31, ActorType.Enemy, Class.None, new(102.5f, 22.5f));
+                f.World.Execute(new ActorState.OpTether(statue.InstanceID, new(45, f.World.Party[i]!.InstanceID)));
+            }
+            // Default plays the first stack on the north set; Yarn starts south.
+            WPos mine = yarn ? new(100, 109) : new(100, 91), other = yarn ? new(100, 91) : new(100, 109);
+            for (var i = 0; i < 8; ++i)
+            {
+                var zones = f.Hints(component, i, (PartyRolesConfig.Assignment)i).ForbiddenZones;
+                Check(zones.Count > 0 && zones[^1].shapeDistance.Distance(mine) >= 0 && zones[^1].shapeDistance.Distance(other) < 0,
+                    $"DMU {(yarn ? "Yarn" : "default")} gravity: first stack route for slot{i}");
+            }
         }
         Service.Config.Get<DMUConfig>().YarnPirenStrategy = false;
     }

@@ -75,9 +75,9 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
 
         if (Spreads.Count != 0) {
             if (spreadTethers[pcSlot]) {
-                var safeSpot = side == P1GravitasData.Side.NORTH
+                var safeSpot = Yarn(side == P1GravitasData.Side.NORTH
                     ? P1GravitasData.SpreadSafeSpots.GetValueOrDefault(assignment).north
-                    : P1GravitasData.SpreadSafeSpots.GetValueOrDefault(assignment).south;
+                    : P1GravitasData.SpreadSafeSpots.GetValueOrDefault(assignment).south);
                 if (safeSpot == default) {
                     return;
                 }
@@ -97,7 +97,7 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
 
         // Pre-position for stack
         if (!Active) {
-            var safeSpot = P1GravitasData.PuddlesSpots.GetValueOrDefault(side);
+            var safeSpot = Yarn(P1GravitasData.PuddlesSpots.GetValueOrDefault(side));
             if (safeSpot == default) {
                 return;
             }
@@ -129,9 +129,9 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
         }
 
         if (spreadTethers[slot]) {
-            var safeSpot = side == P1GravitasData.Side.NORTH
+            var safeSpot = Yarn(side == P1GravitasData.Side.NORTH
                 ? P1GravitasData.SpreadSafeSpots.GetValueOrDefault(assignment).north
-                : P1GravitasData.SpreadSafeSpots.GetValueOrDefault(assignment).south;
+                : P1GravitasData.SpreadSafeSpots.GetValueOrDefault(assignment).south);
             if (safeSpot == default) {
                 return;
             }
@@ -162,8 +162,11 @@ sealed class Gravitas(BossModule module) : Components.UniformStackSpread(module,
         hints.AddForbiddenZone(new SDInvertedCircle(Module.Center, PositionAIRadius.PRECISE), Spreads[0].Activation);
     }
 
+    // Yarn starts on the south set and repeats north: same geometry as the default, mirrored across the arena's east-west line.
+    private WPos Yarn(WPos p) => dmuConfig.YarnPirenStrategy && p != default ? new(p.X, 2f * Module.Center.Z - p.Z) : p;
+
     private WPos getStackSafeSpot() {
-        var safeSpot = P1GravitasData.PuddlesSpots.GetValueOrDefault(side);
+        var safeSpot = Yarn(P1GravitasData.PuddlesSpots.GetValueOrDefault(side));
         if (safeSpot == default) {
             return default;
         }
