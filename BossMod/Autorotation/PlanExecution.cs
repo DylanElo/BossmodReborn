@@ -151,7 +151,7 @@ public sealed class PlanExecution
                     var e = entries[ei];
                     if (e.WindowEnd < t || e.WindowStart > maxT)
                         continue;
-                    if (!e.IntersectBranchRange(s.BranchID, s.NumBranches))
+                    if (!e.IntersectBranchRange(s.BranchID, s.NumBranches) || !FilterEntry(e, ws, playerSlot))
                         continue;
                     if (e.Value is not StrategyValueTrack stv || stv.Option <= 0 || stv.Option >= config.Options.Count)
                         continue;
