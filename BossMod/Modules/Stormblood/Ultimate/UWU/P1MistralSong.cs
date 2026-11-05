@@ -54,7 +54,7 @@ sealed class P1MistralSongAdds(BossModule module) : Components.CastCounter(modul
         Arena.Actors(_sisters, Colors.Object, true);
         if (_config.P1MistralSongFixedLocation && pc.Role != Role.Tank)
         {
-            var loc = new WPos(107, 107);
+            var loc = new WPos(_config.P1MistralSongX, _config.P1MistralSongZ);
             var circle = new SDCircle(loc, 2f);
             Arena.ZoneCircleOutline(loc, 2f, circle.Contains(pc.Position) ? Colors.Safe : Colors.Danger);
         }
