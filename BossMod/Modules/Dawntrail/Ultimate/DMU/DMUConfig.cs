@@ -30,7 +30,7 @@ public sealed class DMUConfig : ConfigNode {
         [PropertyDisplay("None")]
         GravenImage1None,
 
-        [PropertyDisplay("LPDU")]
+        [PropertyDisplay("LPDU / Kefka Bin (NA)")]
         GravenImage1LPDU,
     }
 
@@ -47,7 +47,10 @@ public sealed class DMUConfig : ConfigNode {
         DoubleTroubleNone,
 
         [PropertyDisplay("LPDU")]
-        DoubleTroubleLPDU
+        DoubleTroubleLPDU,
+
+        [PropertyDisplay("Kefka Bin (NA)")]
+        DoubleTroubleKefkaBin
     }
 
     [PropertyDisplay("P1 DoubleTrouble strategy")]
@@ -62,6 +65,9 @@ public sealed class DMUConfig : ConfigNode {
 
         [PropertyDisplay("LPDU - Uptime Graven Image 2")]
         GravenImage2LPDUUptime,
+
+        [PropertyDisplay("Kefka Bin (NA)")]
+        GravenImage2KefkaBin,
 
         // Saved configs from before upstream's P1 rewrite: without these the whole DMUConfig node fails to load and resets (Yarn flag included).
         GravenImage2Uptime = GravenImage2LPDUUptime,
@@ -97,6 +103,9 @@ public sealed class DMUConfig : ConfigNode {
 
         [PropertyDisplay("LPDU")]
         GravenImage3LPDU,
+
+        [PropertyDisplay("Kefka Bin (NA)")]
+        GravenImage3KefkaBin,
     }
 
     public enum P2ForsakenStrategy {
